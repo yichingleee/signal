@@ -25,23 +25,39 @@ class StrongSingleEvaluator:
         self.vol_cum = vol_cum
         self.trading_val = trading_val
         self.f1_map = f1_map
+        self._num_days = DAY_PER_MONTH
         self.top_tracker = TopKVolumeTracker(config.monitor_pool_size)
         self.symbol_is_valid: dict[str, bool] = {}
         self.forbidden: dict[str, bool] = {}
         self._vol_cumu: dict[str, int] = {}
         self._max_price_amp: dict[str, float] = {}
 
+        # Precomputed month totals (filled during initialize_validity / _is_symbol_valid)
+        self._month_total_tv: dict[str, int] = {}
+        self._month_avg_tv: dict[str, int] = {}
+
+        # Cached prev_close values
+        self._prev_close_cache: dict[str, float] = {}
+
     def initialize_validity(self, symbols: set[str] | None = None) -> set[str]:
         """Pre-compute monthly-trading-value validity for replay universe construction."""
         candidates = symbols if symbols is not None else set(self.f1_map.keys())
         for symbol in candidates:
             self._is_symbol_valid(symbol)
+
+        # Pre-cache prev_close for all known symbols
+        for symbol, ref in self.f1_map.items():
+            self._prev_close_cache[symbol] = ref.previous_close * 10000
+
         return {symbol for symbol, is_valid in self.symbol_is_valid.items() if is_valid}
 
     def _is_symbol_valid(self, symbol: str) -> bool:
         if symbol not in self.symbol_is_valid:
-            total = sum(self.trading_val[i].get(symbol, 0) for i in range(1, DAY_PER_MONTH + 1))
-            avg = total // DAY_PER_MONTH
+            total = sum(self.trading_val[i].get(symbol, 0) for i in range(len(self.trading_val)))
+            num_days = self._num_days
+            avg = total // num_days
+            self._month_total_tv[symbol] = total
+            self._month_avg_tv[symbol] = avg
             self.symbol_is_valid[symbol] = avg >= self.config.min_month_trading_val
         return self.symbol_is_valid[symbol]
 
@@ -73,30 +89,35 @@ class StrongSingleEvaluator:
         price_amp = (idx.day_high - idx.day_low) / idx.day_low
         self._max_price_amp[symbol] = max(price_amp, self._max_price_amp.get(symbol, 0.0))
 
-        ref = self.f1_map.get(symbol)
-        if ref is None:
-            return False
-        prev_close = ref.previous_close * 10000
+        prev_close = self._prev_close_cache.get(symbol)
+        if prev_close is None:
+            ref = self.f1_map.get(symbol)
+            if ref is None:
+                return False
+            prev_close = ref.previous_close * 10000
+            self._prev_close_cache[symbol] = prev_close
         if prev_close <= 0:
             return False
         cond2 = (idx.day_high - prev_close) / prev_close > self.config.day_high_increase_threshold
         return cond2  # cond1 is always False in C++
 
     def _eval_vol_cond(self, idx: IndexData, symbol: str, match_time_us: int) -> bool:
-        total_vol = sum(self.vol_cum[i].query(symbol, match_time_us) for i in range(1, DAY_PER_MONTH + 1))
-        avg = total_vol // DAY_PER_MONTH if total_vol > 0 else 1
+        total_vol = sum(self.vol_cum[i].query(symbol, match_time_us) for i in range(len(self.vol_cum)))
+        num_days = self._num_days
+        avg = total_vol // num_days if total_vol > 0 else 1
 
         vol_cumu = self._vol_cumu.get(symbol, 0)
         cond1 = (vol_cumu / avg) >= self.config.vol_increase_month_ratio if avg > 0 else False
 
-        cum_vol_yesterday = self.vol_cum[1].query(symbol, match_time_us)
+        cum_vol_yesterday = self.vol_cum[0].query(symbol, match_time_us) if self.vol_cum else 0
         cond2 = (
             (vol_cumu / cum_vol_yesterday) >= self.config.vol_increase_yesterday_ratio
             if cum_vol_yesterday > 0 else False
         )
 
-        total_tv = sum(self.trading_val[i].get(symbol, 0) for i in range(1, DAY_PER_MONTH + 1))
-        cond3 = total_tv // DAY_PER_MONTH > self.config.strong_month_trading_val
+        # Use precomputed month total trading value
+        total_tv = self._month_total_tv.get(symbol, 0)
+        cond3 = total_tv // num_days > self.config.strong_month_trading_val
 
         return cond1 or cond2 or cond3
 
@@ -109,10 +130,13 @@ class StrongSingleEvaluator:
         return not self.forbidden.get(symbol, False)
 
     def _eval_extreme_filter(self, symbol: str, price: int) -> bool:
-        ref = self.f1_map.get(symbol)
-        if ref is None:
-            return True
-        prev_close = ref.previous_close * 10000
+        prev_close = self._prev_close_cache.get(symbol)
+        if prev_close is None:
+            ref = self.f1_map.get(symbol)
+            if ref is None:
+                return True
+            prev_close = ref.previous_close * 10000
+            self._prev_close_cache[symbol] = prev_close
         if prev_close <= 0:
             return True
         pct_chg = (price - prev_close) / prev_close

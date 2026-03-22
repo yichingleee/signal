@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 
 
@@ -43,12 +44,14 @@ class NumTracker:
     """Sliding window trade count tracker (circuit breaker detection)."""
 
     window_size_us: int = 600_000_000  # 10 minutes default
-    _symbol_trades: dict[str, list[int]] = field(default_factory=dict)
+    _symbol_trades: dict[str, deque[int]] = field(default_factory=dict)
 
     def on_tick(self, symbol: str, timestamp: int) -> int:
-        timestamps = self._symbol_trades.setdefault(symbol, [])
+        if symbol not in self._symbol_trades:
+            self._symbol_trades[symbol] = deque()
+        timestamps = self._symbol_trades[symbol]
         timestamps.append(timestamp)
         cutoff = timestamp - self.window_size_us
         while timestamps and timestamps[0] <= cutoff:
-            timestamps.pop(0)
+            timestamps.popleft()
         return len(timestamps)

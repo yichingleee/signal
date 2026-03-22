@@ -17,52 +17,61 @@ def _convert_raw_time_to_us(raw_time: int) -> int:
 
 
 def _get_best_prices(depth_line: str) -> tuple[int, int]:
-    """Extract best bid/ask prices from depth line."""
+    """Extract best bid/ask prices from depth line.
+
+    Uses index-based scanning instead of repeated find/split/string building.
+    Format: ...BID:COUNT,PRICE1,QTY1,...ASK:COUNT,PRICE1,QTY1,...
+    """
     bid_price = 0
     ask_price = 0
 
     bid_pos = depth_line.find("BID:")
     if bid_pos != -1:
-        after_bid = depth_line[bid_pos + 4 :]
-        try:
-            count = int(after_bid.split(",")[0])
-            if count > 0:
-                comma_pos = depth_line.find(",", bid_pos)
-                if comma_pos != -1:
-                    price_str = depth_line[comma_pos + 1 :]
-                    # Read until non-digit
-                    digits = ""
-                    for c in price_str:
-                        if c.isdigit():
-                            digits += c
-                        else:
-                            break
-                    if digits:
-                        bid_price = int(digits)
-        except (ValueError, IndexError):
-            pass
+        bid_price = _extract_first_price_after_tag(depth_line, bid_pos + 4)
 
     ask_pos = depth_line.find("ASK:")
     if ask_pos != -1:
-        after_ask = depth_line[ask_pos + 4 :]
-        try:
-            count = int(after_ask.split(",")[0])
-            if count > 0:
-                comma_pos = depth_line.find(",", ask_pos)
-                if comma_pos != -1:
-                    price_str = depth_line[comma_pos + 1 :]
-                    digits = ""
-                    for c in price_str:
-                        if c.isdigit():
-                            digits += c
-                        else:
-                            break
-                    if digits:
-                        ask_price = int(digits)
-        except (ValueError, IndexError):
-            pass
+        ask_price = _extract_first_price_after_tag(depth_line, ask_pos + 4)
 
     return bid_price, ask_price
+
+
+def _extract_first_price_after_tag(line: str, start: int) -> int:
+    """Extract the first price after a BID:/ASK: tag.
+
+    Format after tag: COUNT,PRICE,QTY,...
+    If COUNT > 0, returns PRICE as int.
+    """
+    # Find the comma after COUNT
+    comma = line.find(",", start)
+    if comma == -1:
+        return 0
+
+    # Parse COUNT
+    count_str = line[start:comma]
+    try:
+        count = int(count_str)
+    except ValueError:
+        return 0
+
+    if count <= 0:
+        return 0
+
+    # Price starts right after the comma
+    price_start = comma + 1
+    # Scan digits
+    price_end = price_start
+    line_len = len(line)
+    while price_end < line_len:
+        c = line[price_end]
+        if c < "0" or c > "9":
+            break
+        price_end += 1
+
+    if price_end == price_start:
+        return 0
+
+    return int(line[price_start:price_end])
 
 
 def parse_trade_line(trade_line: str, depth_line: str, market: str) -> MarketTick | None:
@@ -73,7 +82,7 @@ def parse_trade_line(trade_line: str, depth_line: str, market: str) -> MarketTic
     if len(trade_line) < 2 or trade_line[0] != "T" or trade_line[1] != "r":
         return None
 
-    parts = trade_line.split(",")
+    parts = trade_line.split(",", 6)
     if len(parts) < 6:
         return None
 

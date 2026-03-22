@@ -11,8 +11,9 @@ from tw_signal_engine.config.normalize_strategy_config import normalize_strategy
 from tw_signal_engine.config.strategy_config import NormalizedStrategyConfig
 from tw_signal_engine.execution.create_entry_trade import execute_entry, should_enter
 from tw_signal_engine.execution.trade_ledger import on_tick_exit
+from tw_signal_engine.market_data.history_window import HistoryWindow
 from tw_signal_engine.market_data.load_history_window import load_history_window
-from tw_signal_engine.market_data.market_data_records import NumTracker
+from tw_signal_engine.market_data.market_data_records import LinearVolumeTracker, NumTracker
 from tw_signal_engine.records.market_event_records import MarketTick, TradeRecord
 from tw_signal_engine.reference_data.derive_prev_day_limit_up import derive_prev_day_limit_up
 from tw_signal_engine.reference_data.load_group_membership import load_group_membership
@@ -72,6 +73,47 @@ def _finalize_open_positions(
             )
 
 
+def _merge_history_windows(otc: HistoryWindow, tse: HistoryWindow) -> HistoryWindow:
+    """Merge OTC and TSE history windows into a single combined window.
+
+    Both windows should have the same number of slots and corresponding dates.
+    Creates new objects — never mutates the input windows (important for rolling reuse).
+    """
+    num_slots = max(len(otc.vol_cum), len(tse.vol_cum))
+    merged_vol: list[LinearVolumeTracker] = []
+    merged_tv: list[dict[str, int]] = []
+
+    for i in range(num_slots):
+        merged_tracker = LinearVolumeTracker()
+
+        if i < len(otc.vol_cum):
+            for sym, nodes in otc.vol_cum[i].data_store.items():
+                merged_tracker.data_store[sym] = list(nodes)
+
+        if i < len(tse.vol_cum):
+            for sym, nodes in tse.vol_cum[i].data_store.items():
+                if sym not in merged_tracker.data_store:
+                    merged_tracker.data_store[sym] = list(nodes)
+                else:
+                    merged_tracker.data_store[sym].extend(nodes)
+
+        merged_vol.append(merged_tracker)
+
+        tv_merged: dict[str, int] = {}
+        if i < len(otc.trading_val):
+            tv_merged.update(otc.trading_val[i])
+        if i < len(tse.trading_val):
+            for sym, val in tse.trading_val[i].items():
+                tv_merged[sym] = tv_merged.get(sym, 0) + val
+        merged_tv.append(tv_merged)
+
+    return HistoryWindow(
+        vol_cum=merged_vol,
+        trading_val=merged_tv,
+        source_dates=otc.source_dates,
+    )
+
+
 def run_daily_replay(
     trade_date: str,
     config_path: str = "./cfg/parameter.cfg",
@@ -79,8 +121,13 @@ def run_daily_replay(
     files_dir: str = "./files/",
     group_file: str = "./files/group.csv",
     log_folder: str = "",
+    history: HistoryWindow | None = None,
+    use_cache: bool = True,
 ) -> list[TradeRecord]:
-    """Run a single-day replay and return completed trades."""
+    """Run a single-day replay and return completed trades.
+
+    If history is provided, skip loading history from disk (used by batch mode).
+    """
     t_start = time.time()
 
     # 1. Load config
@@ -96,26 +143,22 @@ def run_daily_replay(
     prev_day_lu = derive_prev_day_limit_up(trade_date, files_dir)
     _, symbol_to_groups, group_members = load_group_membership(group_file)
 
-    # 3. Load history
-    t0 = time.time()
-    vol_cum_otc, val_cum_otc, trading_val_otc = load_history_window("OTC", trade_date, data_dir)
-    print(f"[TIMING] getTickData OTC: {(time.time() - t0) * 1000:.0f} ms")
+    # 3. Load history (or use pre-built)
+    if history is None:
+        t0 = time.time()
+        hw_otc = load_history_window("OTC", trade_date, data_dir, use_cache=use_cache)
+        print(f"[TIMING] getTickData OTC: {(time.time() - t0) * 1000:.0f} ms")
 
-    t0 = time.time()
-    vol_cum_tse, val_cum_tse, trading_val_tse = load_history_window("TSE", trade_date, data_dir)
-    print(f"[TIMING] getTickData TSE: {(time.time() - t0) * 1000:.0f} ms")
+        t0 = time.time()
+        hw_tse = load_history_window("TSE", trade_date, data_dir, use_cache=use_cache)
+        print(f"[TIMING] getTickData TSE: {(time.time() - t0) * 1000:.0f} ms")
 
-    # Merge vol/val data from both markets
-    vol_cum = vol_cum_otc  # Use OTC as base
-    trading_val = trading_val_otc
-    for i in range(len(vol_cum_tse)):
-        for sym, tracker_data in vol_cum_tse[i].data_store.items():
-            if sym not in vol_cum[i].data_store:
-                vol_cum[i].data_store[sym] = tracker_data
-            else:
-                vol_cum[i].data_store[sym].extend(tracker_data)
-        for sym, val in trading_val_tse[i].items():
-            trading_val[i][sym] = trading_val[i].get(sym, 0) + val
+        history = _merge_history_windows(hw_otc, hw_tse)
+    else:
+        print("[TIMING] getTickData: using pre-built history")
+
+    vol_cum = history.vol_cum
+    trading_val = history.trading_val
 
     # 4. Initialize screening
     strong_group = StrongGroupEvaluator(
@@ -235,19 +278,19 @@ def run_daily_replay(
         if pos.stocks.get(symbol, 0) > 0 or market_gate.market_disabled:
             continue
 
-        # Screening
-        single = strong_single.on_tick(idx, symbol, tick.match.price, tick.match.qty,
-                                       tick.match_time_us, tick.match_time_str)
-        if not config.strong_single.enabled:
-            single = False
-        if single and config.strategy.single_group_rank_filter:
-            if not strong_group.is_single_allowed(symbol, config.strategy.single_max_member_rank):
-                single = False
+        # Screening (skip disabled features entirely)
+        single = False
+        if config.strong_single.enabled:
+            single = strong_single.on_tick(idx, symbol, tick.match.price, tick.match.qty,
+                                           tick.match_time_us, tick.match_time_str)
+            if single and config.strategy.single_group_rank_filter:
+                if not strong_group.is_single_allowed(symbol, config.strategy.single_max_member_rank):
+                    single = False
 
-        group = strong_group.on_tick(idx, symbol, tick.match.price, tick.match.qty,
-                                     tick.match_time_us, tick.match_time_str, tick.is_limit_up_locked)
-        if not config.strong_group.enabled:
-            group = False
+        group = False
+        if config.strong_group.enabled:
+            group = strong_group.on_tick(idx, symbol, tick.match.price, tick.match.qty,
+                                         tick.match_time_us, tick.match_time_str, tick.is_limit_up_locked)
 
         match_type = "None"
         if single and group:
@@ -257,34 +300,36 @@ def run_daily_replay(
         elif group:
             match_type = "StrongGroup"
 
-        # Signal A
-        if symbol not in signal_a_map:
-            signal_a_map[symbol] = SignalAState(symbol=symbol)
+        # Signal A (skip if disabled)
         f1 = f1_map.get(symbol)
-        is_signal_a, trigger_mt_a = evaluate_signal_a(
-            signal_a_map[symbol], config.signal_a, idx,
-            tick.match.price, tick.match_time_str, tick.match_time_us,
-            match_type, f1,
-        )
-        if not config.signal_a.enabled:
-            is_signal_a = False
+        is_signal_a = False
+        trigger_mt_a = "None"
+        if config.signal_a.enabled:
+            if symbol not in signal_a_map:
+                signal_a_map[symbol] = SignalAState(symbol=symbol)
+            is_signal_a, trigger_mt_a = evaluate_signal_a(
+                signal_a_map[symbol], config.signal_a, idx,
+                tick.match.price, tick.match_time_str, tick.match_time_us,
+                match_type, f1,
+            )
 
-        # Signal B
-        if symbol not in signal_b_map:
-            sb = SignalBState(symbol=symbol)
-            sb.rolling_low.set_duration(config.signal_b.rolling_low_duration_us)
-            sb.rolling_sum_short.set_duration(config.signal_b.rolling_sum_short_duration_us)
-            sb.rolling_sum_long.set_duration(config.signal_b.rolling_sum_long_duration_us)
-            signal_b_map[symbol] = sb
-        is_signal_b, trigger_mt_b = evaluate_signal_b(
-            signal_b_map[symbol], config.signal_b, idx,
-            symbol, tick.match.price, tick.match.qty,
-            tick.match_time_str, tick.match_time_us, tick.trade_at,
-            match_type, f1,
-            symbol in pos.stopped_loss_symbols,
-        )
-        if not config.signal_b.enabled:
-            is_signal_b = False
+        # Signal B (skip if disabled - no state allocation)
+        is_signal_b = False
+        trigger_mt_b = "None"
+        if config.signal_b.enabled:
+            if symbol not in signal_b_map:
+                sb = SignalBState(symbol=symbol)
+                sb.rolling_low.set_duration(config.signal_b.rolling_low_duration_us)
+                sb.rolling_sum_short.set_duration(config.signal_b.rolling_sum_short_duration_us)
+                sb.rolling_sum_long.set_duration(config.signal_b.rolling_sum_long_duration_us)
+                signal_b_map[symbol] = sb
+            is_signal_b, trigger_mt_b = evaluate_signal_b(
+                signal_b_map[symbol], config.signal_b, idx,
+                symbol, tick.match.price, tick.match.qty,
+                tick.match_time_str, tick.match_time_us, tick.trade_at,
+                match_type, f1,
+                symbol in pos.stopped_loss_symbols,
+            )
 
         # Trigger entry
         if is_signal_a or is_signal_b:

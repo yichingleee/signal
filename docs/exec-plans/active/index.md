@@ -1,5 +1,5 @@
 # Active Plans
 
-There are no active in-repo execution plans at the moment.
+- [Replay Runtime Optimization Execution Plan](./replay-runtime-optimization-execution-plan.md)
 
-When new implementation work starts, add a focused plan document here and move it to `docs/exec-plans/completed/` once the work is shipped.
+Move plans to `docs/exec-plans/completed/` once the work is shipped.

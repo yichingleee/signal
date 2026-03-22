@@ -14,6 +14,7 @@ legacy/cpp/replay_tools/udpserver
 # Logs
 exec/log/
 exec/stderr_*.log
+log/
 
 # Batch results
 exec/batch_*/

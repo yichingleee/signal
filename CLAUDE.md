@@ -31,6 +31,10 @@ uv run python -m tw_signal_engine.cli.run_daily_replay \
   --config exec/cfg/parameter.cfg
 ```
 
+## Git 工作流程
+
+- PR 一律發到 `yichingleee/signal`，除非另有指示。
+
 ## 重要約定
 
 - 價格一律用 `price * 10000` 的整數表示。

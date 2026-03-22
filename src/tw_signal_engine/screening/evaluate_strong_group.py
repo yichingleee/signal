@@ -10,7 +10,7 @@ from tw_signal_engine.records.reference_records import ReferenceSymbol
 from tw_signal_engine.state.group_state import GroupRank
 from tw_signal_engine.state.symbol_state import IndexData
 
-DAY_PER_MONTH = 20
+DAY_PER_MONTH = 20  # Max prior sessions in history window
 
 
 @dataclass(slots=True)
@@ -45,12 +45,20 @@ class StrongGroupEvaluator:
         self.trading_val = trading_val
         self.f1_map = f1_map
         self.prev_day_limit_up = prev_day_limit_up
+        self._num_days = DAY_PER_MONTH
 
         # Pre-computed data
         self.symbol_is_valid: dict[str, bool] = {}
         self.trading_value_month_avg: dict[str, int] = {}
         self.group_trading_value_month_avg_sum: dict[str, int] = {}
         self.group_member_count: dict[str, int] = {}
+
+        # Precomputed month totals (filled during initialize_validity)
+        self._month_total_tv: dict[str, int] = {}
+        self._month_avg_tv: dict[str, int] = {}
+
+        # Cached prev_close values (filled on first access)
+        self._prev_close_cache: dict[str, float] = {}
 
         # Runtime state
         self.trading_value_cumu: dict[str, int] = {}
@@ -69,13 +77,16 @@ class StrongGroupEvaluator:
     def initialize_validity(self) -> None:
         """Pre-compute which symbols are valid based on month avg trading val.
 
-        Called once after historical data is loaded (equivalent to C++ getGroup()).
+        Also precomputes month-total trading value per symbol for O(1) lookup in on_tick.
         """
+        num_days = self._num_days
         for group, members in self.group_members.items():
             for symbol in members:
                 if symbol not in self.symbol_is_valid:
-                    total = sum(self.trading_val[i].get(symbol, 0) for i in range(1, DAY_PER_MONTH + 1))
-                    avg = total // DAY_PER_MONTH
+                    total = sum(self.trading_val[i].get(symbol, 0) for i in range(len(self.trading_val)))
+                    avg = total // num_days
+                    self._month_total_tv[symbol] = total
+                    self._month_avg_tv[symbol] = avg
                     self.trading_value_month_avg[symbol] = avg
                     self.symbol_is_valid[symbol] = avg >= self.config.member_min_month_trading_val
 
@@ -85,11 +96,18 @@ class StrongGroupEvaluator:
                     )
                     self.group_member_count[group] = self.group_member_count.get(group, 0) + 1
 
+        # Pre-cache prev_close for all known symbols
+        for symbol, ref in self.f1_map.items():
+            self._prev_close_cache[symbol] = ref.previous_close * 10000
+
     def _percentage_chg(self, symbol: str, price: int) -> float:
-        ref = self.f1_map.get(symbol)
-        if ref is None:
-            return 0.0
-        prev_close = ref.previous_close * 10000
+        prev_close = self._prev_close_cache.get(symbol)
+        if prev_close is None:
+            ref = self.f1_map.get(symbol)
+            if ref is None:
+                return 0.0
+            prev_close = ref.previous_close * 10000
+            self._prev_close_cache[symbol] = prev_close
         if prev_close <= 0:
             return 0.0
         return (price - prev_close) / prev_close
@@ -164,6 +182,7 @@ class StrongGroupEvaluator:
         price_pct = self._percentage_chg(symbol, price)
 
         ans = False
+        num_days = self._num_days
         for group in self.symbol_to_groups[symbol]:
             if not self._is_valid_group(symbol, group):
                 continue
@@ -174,11 +193,12 @@ class StrongGroupEvaluator:
             if not self.group_rank.is_top_n(group, self.config.group_valid_top_n):
                 continue
 
-            # Volume ratio check
-            total_vol = sum(self.vol_cum[i].query(symbol, match_time_us) for i in range(1, DAY_PER_MONTH + 1))
-            avg = total_vol // DAY_PER_MONTH if total_vol > 0 else 1
+            # Volume ratio check (vol_cum query still needed per-tick due to time dependency)
+            total_vol = sum(self.vol_cum[i].query(symbol, match_time_us) for i in range(len(self.vol_cum)))
+            avg = total_vol // num_days if total_vol > 0 else 1
 
-            total_tv = sum(self.trading_val[i].get(symbol, 0) for i in range(1, DAY_PER_MONTH + 1))
+            # Use precomputed month total trading value
+            total_tv = self._month_total_tv.get(symbol, 0)
 
             group_vol_exempt = (
                 self.group_trading_value_month_avg_sum.get(group, 0) > self.config.group_vol_ratio_exempt_threshold
@@ -188,7 +208,7 @@ class StrongGroupEvaluator:
                 not self.config.member_cond1_enabled
                 or group_vol_exempt
                 or (vol_cumu / avg >= self.config.member_strong_vol_ratio if avg > 0 else False)
-                or total_tv // DAY_PER_MONTH > self.config.member_strong_trading_val
+                or total_tv // num_days > self.config.member_strong_trading_val
             )
             cond2 = not self.config.member_cond2_enabled or (price_pct > 0.02 and vwap_pct > 0.01)
             member_vwap_chg = self._percentage_chg(symbol, int(idx.vwap))
@@ -247,7 +267,7 @@ class StrongGroupEvaluator:
                         if should_update:
                             ranked = self.group_member_vwap_rank[group].iter_ranked()
                             m1 = ranked[0][1] if ranked else ""
-                            mtv = total_tv // DAY_PER_MONTH
+                            mtv = total_tv // num_days
                             self.last_match_info[symbol] = MatchInfo(
                                 group_name=group,
                                 group_rank=gr,

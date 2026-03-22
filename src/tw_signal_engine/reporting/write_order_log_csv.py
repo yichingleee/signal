@@ -14,29 +14,30 @@ LOG_HEADER = [
 
 
 class OrderLogWriter:
-    """Writes order_log CSV files (main + per-symbol)."""
+    """Writes order_log CSV files (main + per-symbol).
+
+    Writes are buffered and flushed on close (or explicit flush).
+    """
 
     def __init__(self, log_dir: str, date: str) -> None:
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.date = date
 
-        # Main log
+        # Main log (buffered)
         self._main_path = self.log_dir / f"order_log_{date}.csv"
-        self._main_f: io.TextIOWrapper = open(self._main_path, "w", newline="")
+        self._main_f: io.TextIOWrapper = open(self._main_path, "w", newline="", buffering=8192)
         self._main_w: Any = csv.writer(self._main_f)
         self._main_w.writerow(LOG_HEADER)
-        self._main_f.flush()
 
         self._symbol_files: dict[str, tuple[io.TextIOWrapper, Any]] = {}
 
     def _get_symbol_writer(self, symbol: str) -> Any:
         if symbol not in self._symbol_files:
             path = self.log_dir / f"order_log_{self.date}_{symbol}.csv"
-            f: io.TextIOWrapper = open(path, "w", newline="")
+            f: io.TextIOWrapper = open(path, "w", newline="", buffering=8192)
             w: Any = csv.writer(f)
             w.writerow(LOG_HEADER)
-            f.flush()
             self._symbol_files[symbol] = (f, w)
         return self._symbol_files[symbol][1]
 
@@ -58,7 +59,6 @@ class OrderLogWriter:
             signal_type, cause, "-", f"{remaining_qty:.0f}", group_info,
         ]
         self._main_w.writerow(row)
-        self._main_f.flush()
         sw = self._get_symbol_writer(symbol)
         sw.writerow(row)
 
@@ -78,7 +78,6 @@ class OrderLogWriter:
             "-", "-", cause, f"{remaining_qty:.0f}", "",
         ]
         self._main_w.writerow(row)
-        self._main_f.flush()
         sw = self._get_symbol_writer(symbol)
         sw.writerow(row)
 

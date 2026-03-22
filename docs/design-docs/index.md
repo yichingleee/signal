@@ -4,6 +4,8 @@ These documents explain how the current Python replay engine is organized and wh
 
 - [docs/design-docs/runtime-architecture.md](runtime-architecture.md): end-to-end replay flow and module responsibilities
 - [docs/design-docs/python-module-namespaces.md](python-module-namespaces.md): namespace review, doc move plan, and future split candidates
+- [docs/design-docs/replay-runtime-optimization-research.md](replay-runtime-optimization-research.md): runtime bottlenecks, optimization priorities, and benchmark design for replay work
+- [docs/design-docs/replay-runtime-optimization-verification.md](replay-runtime-optimization-verification.md): post-optimization benchmarks, correctness validation, and remaining bottleneck analysis
 
 Cross-links:
 
