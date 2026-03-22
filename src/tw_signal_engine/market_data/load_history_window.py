@@ -6,7 +6,6 @@ import logging
 from pathlib import Path
 
 from tw_signal_engine.market_data.build_volume_caches import (
-    build_cache,
     is_cache_valid,
     load_cache,
 )
@@ -82,9 +81,7 @@ def _load_one_day(
             logger.debug("Cache hit: %s %s", market_type, file_date)
             return load_cache(market_type, file_date, data_dir)
         else:
-            logger.info("Cache miss: %s %s, rebuilding", market_type, file_date)
-            build_cache(market_type, file_date, data_dir)
-            return load_cache(market_type, file_date, data_dir)
+            logger.info("Cache miss: %s %s, falling back to text parse", market_type, file_date)
 
     # No cache: parse from text
     tracker = LinearVolumeTracker()

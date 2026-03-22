@@ -122,6 +122,7 @@ def run_daily_replay(
     group_file: str = "./files/group.csv",
     log_folder: str = "",
     history: HistoryWindow | None = None,
+    use_cache: bool = True,
 ) -> list[TradeRecord]:
     """Run a single-day replay and return completed trades.
 
@@ -145,11 +146,11 @@ def run_daily_replay(
     # 3. Load history (or use pre-built)
     if history is None:
         t0 = time.time()
-        hw_otc = load_history_window("OTC", trade_date, data_dir)
+        hw_otc = load_history_window("OTC", trade_date, data_dir, use_cache=use_cache)
         print(f"[TIMING] getTickData OTC: {(time.time() - t0) * 1000:.0f} ms")
 
         t0 = time.time()
-        hw_tse = load_history_window("TSE", trade_date, data_dir)
+        hw_tse = load_history_window("TSE", trade_date, data_dir, use_cache=use_cache)
         print(f"[TIMING] getTickData TSE: {(time.time() - t0) * 1000:.0f} ms")
 
         history = _merge_history_windows(hw_otc, hw_tse)

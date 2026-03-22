@@ -10,7 +10,6 @@ import logging
 from collections import deque
 
 from tw_signal_engine.market_data.build_volume_caches import (
-    build_cache,
     is_cache_valid,
     load_cache,
 )
@@ -93,10 +92,9 @@ class RollingHistoryProvider:
     def _load_one(self, date: str, filepath: str) -> tuple[LinearVolumeTracker, dict[str, int]]:
         """Load a single day, preferring cache."""
         if self.use_cache:
-            if not is_cache_valid(self.market_type, date, self.data_dir):
-                logger.info("Cache miss: %s %s, building", self.market_type, date)
-                build_cache(self.market_type, date, self.data_dir)
-            return load_cache(self.market_type, date, self.data_dir)
+            if is_cache_valid(self.market_type, date, self.data_dir):
+                return load_cache(self.market_type, date, self.data_dir)
+            logger.info("Cache miss: %s %s, falling back to text parse", self.market_type, date)
 
         from tw_signal_engine.market_data.load_history_window import _parse_vol_cum_from_file
 

@@ -25,7 +25,7 @@ class StrongSingleEvaluator:
         self.vol_cum = vol_cum
         self.trading_val = trading_val
         self.f1_map = f1_map
-        self._num_days = len(trading_val) or DAY_PER_MONTH
+        self._num_days = DAY_PER_MONTH
         self.top_tracker = TopKVolumeTracker(config.monitor_pool_size)
         self.symbol_is_valid: dict[str, bool] = {}
         self.forbidden: dict[str, bool] = {}

@@ -98,14 +98,15 @@ def test_load_cache_matches_text_parse(data_dir) -> None:
                 assert t.cumulative_qty == c.cumulative_qty
 
 
-def test_load_history_window_auto_builds_cache(data_dir) -> None:
-    """load_history_window with use_cache=True auto-builds missing caches."""
+def test_load_history_window_cache_miss_does_not_write(data_dir) -> None:
+    """load_history_window with use_cache=True falls back to text parse without writing cache."""
     cache_path = _cache_path(str(data_dir), "OTC", "20260128")
     assert not cache_path.exists()
 
     hw = load_history_window("OTC", "20260129", str(data_dir), use_cache=True)
     assert hw.num_days == 1
-    assert cache_path.exists()
+    # Cache should NOT be auto-built — keeps data dir read-only safe
+    assert not cache_path.exists()
 
 
 def test_build_cache_missing_source(data_dir) -> None:

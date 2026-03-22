@@ -45,7 +45,7 @@ class StrongGroupEvaluator:
         self.trading_val = trading_val
         self.f1_map = f1_map
         self.prev_day_limit_up = prev_day_limit_up
-        self._num_days = len(trading_val) or DAY_PER_MONTH
+        self._num_days = DAY_PER_MONTH
 
         # Pre-computed data
         self.symbol_is_valid: dict[str, bool] = {}
