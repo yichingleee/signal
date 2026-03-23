@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 import time
 from datetime import datetime
 
@@ -49,9 +48,10 @@ def _finalize_open_positions(
     entry_idx_map: dict[str, IndexData],
     completed_trades: list[TradeRecord],
     log_writer: OrderLogWriter,
+    last_match_time_str: int,
 ) -> None:
     dummy_tick = MarketTick()
-    dummy_tick.match_time_str = sys.maxsize
+    dummy_tick.match_time_str = last_match_time_str
     for symbol, qty in list(pos.stocks.items()):
         if qty <= 0:
             continue
@@ -224,6 +224,7 @@ def run_daily_replay(
     t0 = time.time()
     num_tracker = NumTracker()
     tick_count = 0
+    last_match_time_str = config.execution.exit_time_limit
 
     for tick in merge_market_streams(
         "OTC", trade_date, "TSE", trade_date,
@@ -234,6 +235,7 @@ def run_daily_replay(
     ):
         tick_count += 1
         last_price[tick.symbol] = tick.match.price
+        last_match_time_str = tick.match_time_str
 
         # Market gate (0050 tracking)
         if tick.symbol == "0050" and tick.trade_code == 1 and tick.match.price > 0:
@@ -247,6 +249,7 @@ def run_daily_replay(
                     entry_idx_map,
                     completed_trades,
                     log_writer,
+                    max(last_match_time_str, config.execution.exit_time_limit),
                 )
                 _generate_reports(completed_trades, log_dir, market_gate.market_open_chg_pct)
                 log_writer.close()
@@ -283,7 +286,7 @@ def run_daily_replay(
         if config.strong_single.enabled:
             single = strong_single.on_tick(idx, symbol, tick.match.price, tick.match.qty,
                                            tick.match_time_us, tick.match_time_str)
-            if single and config.strategy.single_group_rank_filter:
+            if single and config.strong_group.enabled and config.strategy.single_group_rank_filter:
                 if not strong_group.is_single_allowed(symbol, config.strategy.single_max_member_rank):
                     single = False
 
@@ -377,6 +380,7 @@ def run_daily_replay(
         entry_idx_map,
         completed_trades,
         log_writer,
+        max(last_match_time_str, config.execution.exit_time_limit),
     )
 
     # 9. Generate reports
