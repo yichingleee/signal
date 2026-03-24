@@ -53,6 +53,7 @@ def _finalize_open_positions(
     completed_trades: list[TradeRecord],
     log_writer: OrderLogWriter,
     last_match_time_str: int,
+    hooks: SessionHooks | None = None,
 ) -> None:
     dummy_tick = MarketTick()
     dummy_tick.match_time_str = last_match_time_str
@@ -75,6 +76,8 @@ def _finalize_open_positions(
                 pos.cash, pos.symbol_cash.get(symbol, 0), cause,
                 pos.stocks.get(symbol, 0),
             )
+            if hooks and hooks.on_exit and completed_trades:
+                hooks.on_exit(symbol, cause, completed_trades[-1])
 
 
 def _merge_history_windows(otc: HistoryWindow, tse: HistoryWindow) -> HistoryWindow:
@@ -311,9 +314,15 @@ def run_daily_replay(
                     completed_trades,
                     log_writer,
                     max(last_match_time_str, config.execution.exit_time_limit),
+                    hooks,
                 )
                 _generate_reports(completed_trades, log_dir, market_gate.market_open_chg_pct)
                 log_writer.close()
+                # Finalize snapshots before early return
+                if snapshot_writer is not None:
+                    snapshot_writer.finalize()
+                if signal_snapshot_writer is not None:
+                    signal_snapshot_writer.finalize()
                 return completed_trades
 
         # Skip non-trade ticks and "00XX" symbols
@@ -472,6 +481,7 @@ def run_daily_replay(
         completed_trades,
         log_writer,
         max(last_match_time_str, config.execution.exit_time_limit),
+        hooks,
     )
 
     # 9. Generate reports

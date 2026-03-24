@@ -46,6 +46,12 @@ class ReplayManager:
             "count": len(self._df),
         }
 
+    @staticmethod
+    def _time_to_minutes(t: str) -> int:
+        """Convert "HH:MM" or "H:MM" to minutes since midnight."""
+        parts = t.split(":")
+        return int(parts[0]) * 60 + int(parts[1])
+
     def jump_to_time(self, time_str: str) -> dict[str, Any] | None:
         """Jump to the nearest minute at or before the given time.
 
@@ -55,8 +61,9 @@ class ReplayManager:
         if self._df is None or len(self._df) == 0:
             return None
 
-        # Find the latest snapshot at or before the target time
-        mask = self._df["time_str"] <= time_str
+        target_minutes = self._time_to_minutes(time_str)
+        col_minutes = self._df["time_str"].map(self._time_to_minutes)
+        mask = col_minutes <= target_minutes
         matching = self._df[mask]
         if matching.empty:
             return None
