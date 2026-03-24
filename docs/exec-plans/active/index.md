@@ -1,5 +1,5 @@
 # Active Plans
 
-- [Replay Runtime Optimization Execution Plan](./replay-runtime-optimization-execution-plan.md)
+- [Enhanced Replay Report Audit](./enhanced-replay-report-audit.md)
 
 Move plans to `docs/exec-plans/completed/` once the work is shipped.
