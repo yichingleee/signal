@@ -23,6 +23,7 @@ from tw_signal_engine.replay.merge_market_streams import merge_market_streams
 from tw_signal_engine.reporting.build_category_summary import write_category_report
 from tw_signal_engine.reporting.build_daily_summary import write_summary_report
 from tw_signal_engine.reporting.build_trade_report_rows import write_trade_report
+from tw_signal_engine.reporting.funnel_tracker import FunnelTracker
 from tw_signal_engine.reporting.write_order_log_csv import OrderLogWriter
 from tw_signal_engine.screening.evaluate_strong_group import StrongGroupEvaluator
 from tw_signal_engine.screening.evaluate_strong_single import StrongSingleEvaluator
@@ -49,6 +50,7 @@ def _finalize_open_positions(
     completed_trades: list[TradeRecord],
     log_writer: OrderLogWriter,
     last_match_time_str: int,
+    trade_date: str = "",
 ) -> None:
     dummy_tick = MarketTick()
     dummy_tick.match_time_str = last_match_time_str
@@ -64,6 +66,7 @@ def _finalize_open_positions(
         cause = on_tick_exit(
             config.execution, symbol, lp, lp,
             dummy_tick.match_time_str, sig_type, eidx, pos, completed_trades,
+            trade_date=trade_date,
         )
         if cause:
             log_writer.write_leave(
@@ -114,6 +117,18 @@ def _merge_history_windows(otc: HistoryWindow, tse: HistoryWindow) -> HistoryWin
     )
 
 
+def _parse_cost_model(cost_str: str) -> dict[str, float]:
+    """Parse 'commission=0.001425,tax=0.0015' into dict."""
+    result: dict[str, float] = {}
+    if not cost_str:
+        return result
+    for part in cost_str.split(","):
+        if "=" in part:
+            key, val = part.split("=", 1)
+            result[key.strip()] = float(val.strip())
+    return result
+
+
 def run_daily_replay(
     trade_date: str,
     config_path: str = "./cfg/parameter.cfg",
@@ -123,6 +138,8 @@ def run_daily_replay(
     log_folder: str = "",
     history: HistoryWindow | None = None,
     use_cache: bool = True,
+    no_charts: bool = False,
+    cost_model_override: str = "",
 ) -> list[TradeRecord]:
     """Run a single-day replay and return completed trades.
 
@@ -133,6 +150,15 @@ def run_daily_replay(
     # 1. Load config
     raw_cfg = load_legacy_ini(config_path)
     config = normalize_strategy_config(raw_cfg)
+
+    # Apply cost model override if provided
+    cost_params = _parse_cost_model(cost_model_override)
+    if "commission" in cost_params:
+        config.execution.commission_rate = cost_params["commission"]
+    if "tax" in cost_params:
+        config.execution.tax_rate = cost_params["tax"]
+    if "slippage" in cost_params:
+        config.execution.slippage_bps = cost_params["slippage"]
     print(f"signalA_enabled: [{config.signal_a.enabled}]")
     print(f"signalB_enabled: [{config.signal_b.enabled}]")
     print(f"strongGroup_enabled: [{config.strong_group.enabled}]")
@@ -199,6 +225,9 @@ def run_daily_replay(
     signal_a_map: dict[str, SignalAState] = {}
     signal_b_map: dict[str, SignalBState] = {}
     last_price: dict[str, int] = {}
+    funnel = FunnelTracker()
+    funnel.universe_count = len(tick_filter)
+    funnel.valid_group_symbols = len(strong_group.symbol_is_valid)
 
     # Determine if Friday
     is_friday = False
@@ -250,8 +279,12 @@ def run_daily_replay(
                     completed_trades,
                     log_writer,
                     max(last_match_time_str, config.execution.exit_time_limit),
+                    trade_date=trade_date,
                 )
-                _generate_reports(completed_trades, log_dir, market_gate.market_open_chg_pct)
+                _generate_reports(
+                    completed_trades, log_dir, market_gate.market_open_chg_pct,
+                    funnel, trade_date, no_charts,
+                )
                 log_writer.close()
                 return completed_trades
 
@@ -271,7 +304,8 @@ def run_daily_replay(
             sig_type = entry_signal_type.get(symbol, "")
             eidx = entry_idx_map.get(symbol, IndexData())
             cause = on_tick_exit(config.execution, symbol, tick.match.price, tick.bid[0].price,
-                                tick.match_time_str, sig_type, eidx, pos, completed_trades)
+                                tick.match_time_str, sig_type, eidx, pos, completed_trades,
+                                trade_date=trade_date)
             if cause:
                 log_writer.write_leave(symbol, tick.match_time_str, tick.match.price,
                                        pos.cash, pos.symbol_cash.get(symbol, 0), cause,
@@ -302,6 +336,9 @@ def run_daily_replay(
             match_type = "StrongSingle"
         elif group:
             match_type = "StrongGroup"
+
+        if match_type != "None":
+            funnel.group_qualified_ticks += 1
 
         # Signal A (skip if disabled)
         f1 = f1_map.get(symbol)
@@ -336,6 +373,7 @@ def run_daily_replay(
 
         # Trigger entry
         if is_signal_a or is_signal_b:
+            funnel.signal_triggered += 1
             if is_signal_a and is_signal_b:
                 sig_type = "SignalA"
                 tmt = trigger_mt_a
@@ -346,15 +384,24 @@ def run_daily_replay(
                 sig_type = "SignalB"
                 tmt = trigger_mt_b
 
-            if should_enter(config.execution, tick, tmt, sig_type, pos, is_friday,
-                            p0050_prev, market_gate.p0050_latest, market_gate.market_open_chg_pct,
-                            strong_single.forbidden if config.strong_single.enabled else None):
+            allowed, block_reason = should_enter(
+                config.execution, tick, tmt, sig_type, pos, is_friday,
+                p0050_prev, market_gate.p0050_latest, market_gate.market_open_chg_pct,
+                strong_single.forbidden if config.strong_single.enabled else None,
+            )
+            if allowed:
                 execute_entry(config.execution, tick, idx, tmt, sig_type, pos, f1_map,
                               strong_group, p0050_prev, market_gate.p0050_latest,
                               market_gate.market_open_chg_pct)
+                # Initialize MAE/MFE tracking at entry price
+                entry_price_int = int(pos.open_trades[symbol].entry_price * 10000 + 0.5)
+                pos.trade_low[symbol] = entry_price_int
+                pos.trade_high[symbol] = entry_price_int
+
                 entry_idx_map[symbol] = idx
                 entry_signal_type[symbol] = sig_type
                 entry_idx += 1
+                funnel.executed_trades += 1
 
                 # Write log
                 mi = strong_group.last_match_info.get(symbol)
@@ -368,6 +415,9 @@ def run_daily_replay(
                     pos.cash, pos.symbol_cash.get(symbol, 0), sig_type, tmt,
                     pos.stocks.get(symbol, 0), group_info,
                 )
+            else:
+                if block_reason:
+                    funnel.record_block(block_reason)
 
     print(f"[TIMING] readFileMerged: {(time.time() - t0) * 1000:.0f} ms")
 
@@ -381,10 +431,11 @@ def run_daily_replay(
         completed_trades,
         log_writer,
         max(last_match_time_str, config.execution.exit_time_limit),
+        trade_date=trade_date,
     )
 
     # 9. Generate reports
-    _generate_reports(completed_trades, log_dir, market_gate.market_open_chg_pct)
+    _generate_reports(completed_trades, log_dir, market_gate.market_open_chg_pct, funnel, trade_date, no_charts)
     log_writer.close()
 
     print(f"[TIMING] TOTAL: {(time.time() - t_start) * 1000:.0f} ms")
@@ -393,7 +444,34 @@ def run_daily_replay(
     return completed_trades
 
 
-def _generate_reports(completed_trades: list[TradeRecord], log_dir: str, market_open_chg_pct: float) -> None:
+def _generate_reports(
+    completed_trades: list[TradeRecord],
+    log_dir: str,
+    market_open_chg_pct: float,
+    funnel: FunnelTracker | None = None,
+    trade_date: str = "",
+    no_charts: bool = False,
+) -> None:
     write_trade_report(completed_trades, log_dir, market_open_chg_pct)
     write_summary_report(completed_trades, log_dir)
     write_category_report(completed_trades, log_dir)
+
+    # New Phase 2 reports (imported lazily to keep existing imports clean)
+    from tw_signal_engine.reporting.build_concentration_report import write_concentration_report
+    from tw_signal_engine.reporting.build_funnel_report import write_funnel_report
+    from tw_signal_engine.reporting.build_statistics_report import write_statistics_report
+    from tw_signal_engine.reporting.build_trade_path_report import write_trade_path_report
+
+    if funnel is not None:
+        write_funnel_report(funnel, log_dir)
+    write_statistics_report(completed_trades, log_dir)
+    write_concentration_report(completed_trades, log_dir)
+    write_trade_path_report(completed_trades, log_dir)
+
+    # Charts
+    if not no_charts:
+        try:
+            from tw_signal_engine.reporting.generate_charts import generate_daily_charts
+            generate_daily_charts(completed_trades, funnel, log_dir)
+        except ImportError:
+            pass

@@ -31,3 +31,7 @@ class EntryTrade:
     had_circuit_breaker: bool = False
     group_limit_up_count: int = 0
     market_entry_chg_pct: float = 0.0
+    # TP slice tracking
+    first_tp_time_raw: int = 0
+    tp_slices_filled: int = 0
+    tp_realized_pnl: float = 0.0
