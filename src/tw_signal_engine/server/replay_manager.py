@@ -83,8 +83,10 @@ class ReplayManager:
         """Return all signal records."""
         if self._signals_df is None or len(self._signals_df) == 0:
             return []
-        records: list[dict[str, Any]] = self._signals_df.to_dict(orient="records")
-        return records
+        return [
+            {str(k): v for k, v in rec.items()}
+            for rec in self._signals_df.to_dict(orient="records")
+        ]
 
     @staticmethod
     def _row_to_dict(row: Any) -> dict[str, Any]:

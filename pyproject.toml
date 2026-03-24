@@ -50,3 +50,10 @@ testpaths = ["tests"]
 markers = [
     "golden: parity checks against archived C++ replay baselines",
 ]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "pytest>=9.0.2",
+    "ruff>=0.15.7",
+]
