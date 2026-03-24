@@ -114,6 +114,16 @@ class StrategyGlobalConfig(BaseModel):
     single_max_member_rank: int = 1
 
 
+class LiveConfig(BaseModel):
+    enabled: bool = False
+    redis_host: str = "192.168.100.130"
+    redis_port: int = 6379
+    redis_db: int = 0
+    socket_timeout: int = 5
+    reconnect_delay: float = 5.0
+    reorder_buffer_ms: int = 100
+
+
 class NormalizedStrategyConfig(BaseModel):
     """Top-level config container, produced by normalize_strategy_config."""
 
@@ -123,3 +133,4 @@ class NormalizedStrategyConfig(BaseModel):
     strong_group: StrongGroupConfig = StrongGroupConfig()
     strong_single: StrongSingleConfig = StrongSingleConfig()
     execution: ExecutionConfig = ExecutionConfig()
+    live: LiveConfig = LiveConfig()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from tw_signal_engine.config.strategy_config import (
     ExecutionConfig,
+    LiveConfig,
     NormalizedStrategyConfig,
     SignalAConfig,
     SignalBConfig,
@@ -155,6 +156,18 @@ def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrat
         tp_base_entry=_bool(_get(order_raw, "tp_base_entry", "true")),
     )
 
+    # Live config (optional section)
+    live_raw = raw.get("Live", {})
+    live = LiveConfig(
+        enabled=_bool(_get(live_raw, "enabled", "false")),
+        redis_host=_get(live_raw, "redis_host", "192.168.100.130") or "192.168.100.130",
+        redis_port=int(_get(live_raw, "redis_port", "6379")),
+        redis_db=int(_get(live_raw, "redis_db", "0")),
+        socket_timeout=int(_get(live_raw, "socket_timeout", "5")),
+        reconnect_delay=float(_get(live_raw, "reconnect_delay", "5.0")),
+        reorder_buffer_ms=int(_get(live_raw, "reorder_buffer_ms", "100")),
+    )
+
     return NormalizedStrategyConfig(
         strategy=strategy,
         signal_a=signal_a,
@@ -162,4 +175,5 @@ def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrat
         strong_group=strong_group,
         strong_single=strong_single,
         execution=execution,
+        live=live,
     )

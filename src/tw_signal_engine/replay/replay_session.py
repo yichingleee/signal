@@ -10,16 +10,20 @@ from tw_signal_engine.config.normalize_strategy_config import normalize_strategy
 from tw_signal_engine.config.strategy_config import NormalizedStrategyConfig
 from tw_signal_engine.execution.create_entry_trade import execute_entry, should_enter
 from tw_signal_engine.execution.trade_ledger import on_tick_exit
+from tw_signal_engine.market_data.file_replay_provider import FileReplayProvider
 from tw_signal_engine.market_data.history_window import HistoryWindow
 from tw_signal_engine.market_data.load_history_window import load_history_window
 from tw_signal_engine.market_data.market_data_records import LinearVolumeTracker, NumTracker
+from tw_signal_engine.market_data.paced_replay_provider import PacedReplayProvider
+from tw_signal_engine.market_data.providers import MarketDataProvider
 from tw_signal_engine.records.market_event_records import MarketTick, TradeRecord
+from tw_signal_engine.records.trade_records import EntryTrade
 from tw_signal_engine.reference_data.derive_prev_day_limit_up import derive_prev_day_limit_up
 from tw_signal_engine.reference_data.load_group_membership import load_group_membership
 from tw_signal_engine.reference_data.load_symbol_reference import load_symbol_reference
 from tw_signal_engine.replay.apply_market_gate import MarketGate
 from tw_signal_engine.replay.build_replay_universe import build_replay_universe
-from tw_signal_engine.replay.merge_market_streams import merge_market_streams
+from tw_signal_engine.replay.session_hooks import SessionHooks
 from tw_signal_engine.reporting.build_category_summary import write_category_report
 from tw_signal_engine.reporting.build_daily_summary import write_summary_report
 from tw_signal_engine.reporting.build_trade_report_rows import write_trade_report
@@ -123,6 +127,11 @@ def run_daily_replay(
     log_folder: str = "",
     history: HistoryWindow | None = None,
     use_cache: bool = True,
+    provider: MarketDataProvider | None = None,
+    replay_speed: float | None = None,
+    hooks: SessionHooks | None = None,
+    enable_snapshots: bool = False,
+    snapshot_dir: str = "./cache/replay/",
 ) -> list[TradeRecord]:
     """Run a single-day replay and return completed trades.
 
@@ -220,19 +229,71 @@ def run_daily_replay(
 
     entry_idx = 0
 
+    # Setup snapshot writers if enabled
+    snapshot_writer = None
+    signal_snapshot_writer = None
+    if enable_snapshots:
+        from tw_signal_engine.reporting.snapshot_writer import SignalSnapshotWriter, SnapshotWriter
+
+        snapshot_writer = SnapshotWriter(trade_date, snapshot_dir)
+        signal_snapshot_writer = SignalSnapshotWriter(trade_date, snapshot_dir)
+
+        # Wire snapshot hooks (merge with any user-provided hooks)
+        if hooks is None:
+            hooks = SessionHooks()
+
+        _user_on_minute = hooks.on_minute
+        _user_on_entry = hooks.on_entry
+        _user_on_exit = hooks.on_exit
+
+        def _snapshot_on_minute(match_time_str: int) -> None:
+            assert snapshot_writer is not None
+            snapshot_writer.capture(
+                match_time_str, strong_group, signal_a_map, signal_b_map,
+                pos, market_gate, completed_trades,
+            )
+            if _user_on_minute:
+                _user_on_minute(match_time_str)
+
+        def _snapshot_on_entry(symbol: str, trade: EntryTrade) -> None:
+            assert signal_snapshot_writer is not None
+            signal_snapshot_writer.on_entry(symbol, trade)
+            if _user_on_entry:
+                _user_on_entry(symbol, trade)
+
+        def _snapshot_on_exit(symbol: str, cause: str, record: TradeRecord) -> None:
+            assert signal_snapshot_writer is not None
+            signal_snapshot_writer.on_exit(symbol, cause, record)
+            if _user_on_exit:
+                _user_on_exit(symbol, cause, record)
+
+        hooks.on_minute = _snapshot_on_minute
+        hooks.on_entry = _snapshot_on_entry
+        hooks.on_exit = _snapshot_on_exit
+
     # 7. Run replay
     t0 = time.time()
     num_tracker = NumTracker()
     tick_count = 0
     last_match_time_str = config.execution.exit_time_limit
 
-    for tick in merge_market_streams(
-        "OTC", trade_date, "TSE", trade_date,
-        data_dir=data_dir,
-        tick_filter=tick_filter,
-        prev_day_limit_up=prev_day_lu,
-        num_tracker=num_tracker,
-    ):
+    if provider is None:
+        file_provider = FileReplayProvider(
+            otc_date=trade_date,
+            tse_date=trade_date,
+            data_dir=data_dir,
+            tick_filter=tick_filter,
+            prev_day_limit_up=prev_day_lu,
+            num_tracker=num_tracker,
+        )
+        if replay_speed is not None:
+            provider = PacedReplayProvider(file_provider, speed=replay_speed)
+        else:
+            provider = file_provider
+
+    _prev_minute_tracker: dict[str, int] = {}
+
+    for tick in provider.iterate_ticks():
         tick_count += 1
         last_price[tick.symbol] = tick.match.price
         last_match_time_str = tick.match_time_str
@@ -266,6 +327,18 @@ def run_daily_replay(
             index_calc_map[symbol] = IndexCalc()
         idx = index_calc_map[symbol].calc(tick.match.price, tick.match.qty)
 
+        # Hook: on_tick
+        if hooks and hooks.on_tick:
+            hooks.on_tick(tick, idx)
+
+        # Hook: on_minute (detect minute boundary crossing)
+        if hooks and hooks.on_minute:
+            cur_minute = tick.match_time_str // 100_000_000
+            prev_minute = _prev_minute_tracker.get("v", -1)
+            if cur_minute != prev_minute:
+                _prev_minute_tracker["v"] = cur_minute
+                hooks.on_minute(tick.match_time_str)
+
         # Exit logic
         if pos.stocks.get(symbol, 0) > 0:
             sig_type = entry_signal_type.get(symbol, "")
@@ -276,6 +349,9 @@ def run_daily_replay(
                 log_writer.write_leave(symbol, tick.match_time_str, tick.match.price,
                                        pos.cash, pos.symbol_cash.get(symbol, 0), cause,
                                        pos.stocks.get(symbol, 0))
+                # Hook: on_exit
+                if hooks and hooks.on_exit and completed_trades:
+                    hooks.on_exit(symbol, cause, completed_trades[-1])
 
         # Skip entry if already holding or market disabled
         if pos.stocks.get(symbol, 0) > 0 or market_gate.market_disabled:
@@ -302,6 +378,10 @@ def run_daily_replay(
             match_type = "StrongSingle"
         elif group:
             match_type = "StrongGroup"
+
+        # Hook: on_screening
+        if hooks and hooks.on_screening and match_type != "None":
+            hooks.on_screening(symbol, match_type, True)
 
         # Signal A (skip if disabled)
         f1 = f1_map.get(symbol)
@@ -334,6 +414,13 @@ def run_daily_replay(
                 symbol in pos.stopped_loss_symbols,
             )
 
+        # Hook: on_signal
+        if hooks and hooks.on_signal:
+            if is_signal_a:
+                hooks.on_signal(symbol, "SignalA", True)
+            if is_signal_b:
+                hooks.on_signal(symbol, "SignalB", True)
+
         # Trigger entry
         if is_signal_a or is_signal_b:
             if is_signal_a and is_signal_b:
@@ -355,6 +442,10 @@ def run_daily_replay(
                 entry_idx_map[symbol] = idx
                 entry_signal_type[symbol] = sig_type
                 entry_idx += 1
+
+                # Hook: on_entry
+                if hooks and hooks.on_entry and symbol in pos.open_trades:
+                    hooks.on_entry(symbol, pos.open_trades[symbol])
 
                 # Write log
                 mi = strong_group.last_match_info.get(symbol)
@@ -386,6 +477,16 @@ def run_daily_replay(
     # 9. Generate reports
     _generate_reports(completed_trades, log_dir, market_gate.market_open_chg_pct)
     log_writer.close()
+
+    # 10. Finalize snapshots
+    if snapshot_writer is not None:
+        path = snapshot_writer.finalize()
+        if path:
+            print(f"[SNAPSHOT] Written {len(snapshot_writer._rows)} snapshots to {path}")
+    if signal_snapshot_writer is not None:
+        path = signal_snapshot_writer.finalize()
+        if path:
+            print(f"[SNAPSHOT] Signal records written to {path}")
 
     print(f"[TIMING] TOTAL: {(time.time() - t_start) * 1000:.0f} ms")
     print(f"Total ticks processed: {tick_count}")

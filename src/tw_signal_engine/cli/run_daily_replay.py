@@ -14,6 +14,10 @@ def main() -> None:
     parser.add_argument("--group-file", default="./files/group.csv", help="Group membership file")
     parser.add_argument("--log-folder", default="", help="Log folder name")
     parser.add_argument("--no-cache", action="store_true", help="Disable volume cache (keep data dir read-only)")
+    parser.add_argument("--paced", action="store_true", help="Enable wall-clock pacing (simulates live timing)")
+    parser.add_argument("--speed", type=float, default=1.0, help="Replay speed multiplier (requires --paced)")
+    parser.add_argument("--snapshots", action="store_true", help="Enable per-minute Parquet snapshot generation")
+    parser.add_argument("--snapshot-dir", default="./cache/replay/", help="Snapshot output directory")
     args = parser.parse_args()
 
     from tw_signal_engine.replay.replay_session import run_daily_replay
@@ -26,6 +30,9 @@ def main() -> None:
         group_file=args.group_file,
         log_folder=args.log_folder,
         use_cache=not args.no_cache,
+        replay_speed=args.speed if args.paced else None,
+        enable_snapshots=args.snapshots,
+        snapshot_dir=args.snapshot_dir,
     )
 
 
