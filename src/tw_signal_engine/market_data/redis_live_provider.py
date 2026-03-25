@@ -45,15 +45,23 @@ class RedisLiveProvider(MarketDataProvider):
         self._num_tracker = NumTracker()
         # Buffer last trade line per symbol for Trade/Depth pairing
         self._pending_trade: dict[str, str] = {}
+        self._listener_thread: threading.Thread | None = None
+
+    def start_listener(self) -> None:
+        """Start the Redis listener thread early (idempotent — safe to call before iterate_ticks)."""
+        if self._listener_thread is None or not self._listener_thread.is_alive():
+            self._listener_thread = threading.Thread(
+                target=self._listen, daemon=True, name="redis-listener"
+            )
+            self._listener_thread.start()
 
     def iterate_ticks(self) -> Iterator[MarketTick]:
         """Yield MarketTick objects from the Redis stream.
 
-        Starts the listener thread, then pulls ticks from the queue.
+        Starts the listener thread if not already running, then pulls ticks from the queue.
         Stops when the stop event is set or a None sentinel is received.
         """
-        listener = threading.Thread(target=self._listen, daemon=True, name="redis-listener")
-        listener.start()
+        self.start_listener()
 
         buffer: list[MarketTick] = []
         buffer_window_us = self._config.reorder_buffer_ms * 1000
@@ -123,6 +131,7 @@ class RedisLiveProvider(MarketDataProvider):
                     pubsub.subscribe(*channels)
                 else:
                     logger.warning("No channels to subscribe to (empty tick_filter)")
+                    self._stop_event.set()
                     return
 
                 logger.info(

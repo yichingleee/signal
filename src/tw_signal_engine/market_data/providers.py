@@ -14,3 +14,6 @@ class MarketDataProvider(ABC):
     @abstractmethod
     def iterate_ticks(self) -> Iterator[MarketTick]:
         """Yield MarketTick objects in chronological order."""
+
+    def start_listener(self) -> None:
+        """Optionally start background I/O before iterate_ticks is called (default: no-op)."""

@@ -28,6 +28,10 @@ class BackfillThenLiveProvider(MarketDataProvider):
         self._cutover_time_str = cutover_time_str
 
     def iterate_ticks(self) -> Iterator[MarketTick]:
+        # Start Redis listener before file replay so it buffers live ticks during Phase 1,
+        # eliminating the switchover gap that would occur if we subscribed only after replay.
+        self.redis_provider.start_listener()
+
         cutover = self._cutover_time_str
         if cutover is None:
             cutover = self._compute_cutover()

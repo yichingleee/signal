@@ -125,6 +125,13 @@ class TestRedisLiveProvider:
         p._handle_line("")
         assert p._queue.qsize() == 0
 
+    def test_empty_tick_filter_terminates(self):
+        """iterate_ticks() must terminate when tick_filter is empty (no infinite loop)."""
+        config = LiveConfig()
+        p = RedisLiveProvider(config, tick_filter=set())
+        result = list(p.iterate_ticks())
+        assert result == []
+
     def test_status_code_filter(self):
         config = LiveConfig()
         p = RedisLiveProvider(config, tick_filter={"2330"})
