@@ -5,6 +5,8 @@ description = "Taiwan stock intraday momentum backtest engine"
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.0",
+    "matplotlib>=3.8",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]

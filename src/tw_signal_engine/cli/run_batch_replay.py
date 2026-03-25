@@ -31,10 +31,14 @@ def main() -> None:
     parser.add_argument("--files-dir", default="./files/", help="Symbol files directory")
     parser.add_argument("--group-file", default="./files/group.csv", help="Group membership file")
     parser.add_argument("--no-cache", action="store_true", help="Disable history cache")
+    parser.add_argument("--no-charts", action="store_true", help="Skip chart generation")
+    parser.add_argument("--cost-model", default="", help="Override cost params: 'commission=0.001425,tax=0.0015'")
     args = parser.parse_args()
 
     from tw_signal_engine.market_data.rolling_history import RollingHistoryProvider
+    from tw_signal_engine.records.market_event_records import TradeRecord
     from tw_signal_engine.replay.replay_session import _merge_history_windows, run_daily_replay
+    from tw_signal_engine.reporting.generate_batch_reports import generate_batch_reports
 
     dates = _get_trading_dates(args.start, args.end, args.data_dir)
     print(f"Batch replay: {len(dates)} dates from {args.start} to {args.end}")
@@ -46,6 +50,8 @@ def main() -> None:
     otc_provider = RollingHistoryProvider("OTC", args.data_dir, use_cache=use_cache)
     tse_provider = RollingHistoryProvider("TSE", args.data_dir, use_cache=use_cache)
 
+    all_trades: list[TradeRecord] = []
+
     for date in dates:
         print(f"\n{'=' * 40}")
         print(f"  Replaying {date}")
@@ -56,7 +62,7 @@ def main() -> None:
             hw_tse = tse_provider.get_history(date)
             merged_history = _merge_history_windows(hw_otc, hw_tse)
 
-            run_daily_replay(
+            day_trades = run_daily_replay(
                 trade_date=date,
                 config_path=args.config,
                 data_dir=args.data_dir,
@@ -64,9 +70,30 @@ def main() -> None:
                 group_file=args.group_file,
                 log_folder=batch_folder,
                 history=merged_history,
+                no_charts=args.no_charts,
+                cost_model_override=args.cost_model,
             )
+            all_trades.extend(day_trades)
         except Exception as e:
             print(f"  ERROR on {date}: {e}")
+
+    # Generate batch-level reports
+    if all_trades:
+        batch_log_dir = f"./log/{batch_folder}/"
+        Path(batch_log_dir).mkdir(parents=True, exist_ok=True)
+        generate_batch_reports(all_trades, batch_log_dir)
+
+        if not args.no_charts:
+            try:
+                from tw_signal_engine.reporting.generate_charts import generate_batch_charts
+                generate_batch_charts(all_trades, batch_log_dir)
+            except ImportError:
+                print("[Charts] matplotlib not installed, skipping batch charts")
+
+        print(f"\n{'=' * 40}")
+        print(f"  Batch complete: {len(all_trades)} trades across {len(dates)} dates")
+        print(f"  Batch reports: {batch_log_dir}")
+        print(f"{'=' * 40}")
 
 
 if __name__ == "__main__":

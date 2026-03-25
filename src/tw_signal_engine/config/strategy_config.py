@@ -105,6 +105,10 @@ class ExecutionConfig(BaseModel):
     take_profit_pcts: list[float] = []
     reserve_limit_up_splits: int = 0
     tp_base_entry: bool = True
+    # Cost model (default 0 = no costs)
+    commission_rate: float = 0.0
+    tax_rate: float = 0.0
+    slippage_bps: float = 0.0
 
 
 class StrategyGlobalConfig(BaseModel):
