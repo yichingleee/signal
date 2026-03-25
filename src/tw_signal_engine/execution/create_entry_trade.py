@@ -93,6 +93,7 @@ def execute_entry(
         entry_vwap=idx.vwap / 10000.0,
         day_high_at_entry=idx.day_high / 10000.0,
         is_prev_day_lu=tick.prev_limit_up,
+        entry_qty=qty,
     )
 
     mi = strong_group.last_match_info.get(tick.symbol)

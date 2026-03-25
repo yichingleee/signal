@@ -32,6 +32,7 @@ def _make_pos(
                 entry_time_raw=entry_time,
                 baseline=-entry_price * qty,
                 entry_price=entry_price,
+                entry_qty=qty,
             )
         },
         trade_low={symbol: entry_price_int},

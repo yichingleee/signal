@@ -67,15 +67,13 @@ def on_tick_exit(
         mae_pct = (trade_low - entry_price_int) / entry_price_int * 100.0 if entry_price_int > 0 else 0.0
         mfe_pct = (trade_high - entry_price_int) / entry_price_int * 100.0 if entry_price_int > 0 else 0.0
 
-        # Cost model
-        entry_notional = ot.entry_price * abs(pos.stocks.get(symbol, 0) + sum(
-            qty for _, qty in pos.orders.get(symbol, [])
-        ))
-        # For exit, approximate notional from gross_pnl + baseline
+        # Cost model — use entry_qty snapshot (stocks/orders are already zeroed by exit paths)
+        entry_notional = ot.entry_price * ot.entry_qty
         exit_notional = abs(pos.symbol_cash.get(symbol, 0))
         commission_val = (abs(entry_notional) + exit_notional) * config.commission_rate
         tax_val = exit_notional * config.tax_rate
-        net_pnl = gross_pnl - commission_val - tax_val
+        slippage_val = (abs(entry_notional) + exit_notional) * config.slippage_bps / 10000.0
+        net_pnl = gross_pnl - commission_val - tax_val - slippage_val
 
         # TP slice info
         from tw_signal_engine.replay.session_time import duration_sec
@@ -123,6 +121,7 @@ def on_tick_exit(
             gross_pnl=gross_pnl,
             commission=commission_val,
             tax=tax_val,
+            slippage=slippage_val,
             net_pnl=net_pnl,
             trade_date=trade_date,
             entry_hour_bucket=_compute_hour_bucket(ot.entry_time_raw),

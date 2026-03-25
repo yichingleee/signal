@@ -29,7 +29,7 @@ def write_trade_report(
             # New columns
             "MAE%", "MFE%", "MAEPrice", "MFEPrice",
             "TimeToFirstTP", "TPSlicesFilled",
-            "GrossPnL", "Commission", "Tax", "NetPnL",
+            "GrossPnL", "Commission", "Tax", "Slippage", "NetPnL",
             "TPPnL", "ResidualPnL",
             "TradeDate", "EntryHourBucket",
         ])
@@ -55,7 +55,7 @@ def write_trade_report(
                 f"{t.mae_pct:.3f}", f"{t.mfe_pct:.3f}",
                 f"{t.mae_price:.2f}", f"{t.mfe_price:.2f}",
                 str(t.time_to_first_tp_sec), str(t.tp_slices_filled),
-                f"{t.gross_pnl:.0f}", f"{t.commission:.0f}", f"{t.tax:.0f}", f"{t.net_pnl:.0f}",
+                f"{t.gross_pnl:.0f}", f"{t.commission:.0f}", f"{t.tax:.0f}", f"{t.slippage:.0f}", f"{t.net_pnl:.0f}",
                 f"{t.tp_pnl:.0f}", f"{t.residual_pnl:.0f}",
                 t.trade_date, t.entry_hour_bucket,
             ])

@@ -76,6 +76,7 @@ class TradeRecord:
     gross_pnl: float = 0.0
     commission: float = 0.0
     tax: float = 0.0
+    slippage: float = 0.0
     net_pnl: float = 0.0
     # Context fields
     trade_date: str = ""

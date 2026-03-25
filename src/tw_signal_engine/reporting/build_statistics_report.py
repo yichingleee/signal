@@ -113,9 +113,12 @@ def write_statistics_report(completed_trades: list[TradeRecord], log_dir: str) -
     ci_pf = _bootstrap_ci(pnls, "profit_factor")
 
     # Expectancy in bps (relative to position cash if available)
-    position_cash = completed_trades[0].gross_pnl  # fallback
-    if completed_trades[0].return_pct != 0:
-        position_cash = completed_trades[0].pnl / completed_trades[0].return_pct * 100
+    # Derive position_cash from first trade with non-zero return_pct
+    position_cash = 0.0
+    for t in completed_trades:
+        if t.return_pct != 0:
+            position_cash = t.pnl / t.return_pct * 100
+            break
     expectancy_bps = expectancy / position_cash * 10000 if position_cash != 0 else 0.0
 
     with open(path, "w", newline="") as f:
