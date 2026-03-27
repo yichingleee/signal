@@ -30,6 +30,7 @@ class TestTradeRecord:
         tr = TradeRecord()
         assert tr.pnl == 0.0
         assert tr.return_pct == 0.0
+        assert tr.exit_price == 0.0
 
 
 class TestEntryTrade:

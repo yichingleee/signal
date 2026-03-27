@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from tw_signal_engine.records.market_event_records import TradeRecord
+from tw_signal_engine.reporting.charts.trade_day_models import IntradayPoint, SymbolTradeDay, TradeMarker
 from tw_signal_engine.reporting.funnel_tracker import FunnelTracker
 
 try:
@@ -158,3 +159,58 @@ class TestRollingMetricsChart:
         plot_rolling_metrics(trades, str(tmp_path))
         assert (tmp_path / "chart_rolling_metrics.png").exists()
         assert (tmp_path / "chart_rolling_metrics.png").stat().st_size > 1024
+
+
+class TestTradeDayTimelineChart:
+    def test_single_trade_symbol_chart_renders(self, tmp_path: Path):
+        from tw_signal_engine.reporting.charts.trade_day_timeline import plot_trade_day_timeline
+
+        symbol_day = SymbolTradeDay(
+            symbol="2330",
+            points=[
+                IntradayPoint(time_raw=91500000000, price=50.0, vwap=50.0),
+                IntradayPoint(time_raw=92000000000, price=50.5, vwap=50.3),
+                IntradayPoint(time_raw=93000000000, price=51.0, vwap=50.6),
+            ],
+            markers=[
+                TradeMarker(kind="signal", time_raw=91500000000, price=50.0, label="Signal SignalA (StrongGroup)"),
+                TradeMarker(kind="entry", time_raw=91500000000, price=50.0, label="Entry 50.00 (StrongGroup)"),
+                TradeMarker(kind="exit", time_raw=93000000000, price=51.0, label="Exit 51.00 (takeProfit)"),
+            ],
+        )
+
+        plot_trade_day_timeline(symbol_day, str(tmp_path))
+        out = tmp_path / "chart_trade_day_2330.png"
+        assert out.exists()
+        assert out.stat().st_size > 1024
+
+    def test_multiple_markers_same_timestamp_no_crash(self, tmp_path: Path):
+        from tw_signal_engine.reporting.charts.trade_day_timeline import plot_trade_day_timeline
+
+        symbol_day = SymbolTradeDay(
+            symbol="2317",
+            points=[
+                IntradayPoint(time_raw=91500000000, price=100.0, vwap=100.0),
+                IntradayPoint(time_raw=91600000000, price=100.2, vwap=100.1),
+            ],
+            markers=[
+                TradeMarker(kind="signal", time_raw=91500000000, price=100.0, label="Signal SignalA"),
+                TradeMarker(kind="entry", time_raw=91500000000, price=100.0, label="Entry 100.00"),
+                TradeMarker(kind="exit", time_raw=91500000000, price=99.8, label="Exit 99.80"),
+                TradeMarker(kind="signal", time_raw=91500000000, price=100.1, label="Signal SignalB"),
+            ],
+        )
+
+        plot_trade_day_timeline(symbol_day, str(tmp_path))
+        assert (tmp_path / "chart_trade_day_2317.png").exists()
+
+    def test_empty_points_skips_output(self, tmp_path: Path):
+        from tw_signal_engine.reporting.charts.trade_day_timeline import plot_trade_day_timeline
+
+        symbol_day = SymbolTradeDay(
+            symbol="2454",
+            points=[],
+            markers=[TradeMarker(kind="entry", time_raw=91500000000, price=10.0, label="Entry 10.00")],
+        )
+        plot_trade_day_timeline(symbol_day, str(tmp_path))
+        assert not (tmp_path / "chart_trade_day_2454.png").exists()

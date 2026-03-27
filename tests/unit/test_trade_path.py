@@ -64,6 +64,7 @@ class TestMAEMFETracking:
         assert abs(tr.mfe_pct - 2.0) < 0.01
         assert tr.mae_price == 49.0
         assert tr.mfe_price == 51.0
+        assert tr.exit_price == 50.5
 
     def test_mae_mfe_zero_when_no_movement(self):
         """MAE/MFE should be 0 when price doesn't move from entry."""

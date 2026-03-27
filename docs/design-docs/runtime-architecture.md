@@ -93,6 +93,17 @@ After the stream ends, or immediately before an early market-gate return, `repla
 - `report_summary.csv`
 - `report_by_category.csv`
 
+If charts are enabled (default, unless `--no-charts` is set), the reporting pipeline also:
+
+- keeps existing aggregate/day-level chart behavior (`len(trades) >= 2`)
+- performs a second filtered stream pass for traded symbols only
+- writes one per-symbol intraday timeline chart:
+  - `chart_trade_day_<symbol>.png`
+- writes a chart manifest:
+  - `report_trade_day_charts.csv`
+
+Per-symbol timeline charts show replay-granularity price, session cumulative VWAP, and labeled signal/entry/exit markers sourced from `TradeRecord` fields (including `exit_price`).
+
 ## Signal and Execution Ordering
 
 The runtime has several ordering rules that matter for correctness:

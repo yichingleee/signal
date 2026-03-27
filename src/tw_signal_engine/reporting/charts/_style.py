@@ -56,3 +56,16 @@ def save_and_close(fig: Any, path: str) -> None:
     fig.savefig(path, dpi=DPI, bbox_inches="tight")
     plt.close(fig)
     print(f"[Chart] {path}")
+
+
+def marker_annotation_style() -> dict[str, Any]:
+    """Shared annotation style for dense marker labeling."""
+    return {
+        "fontsize": 7,
+        "bbox": {
+            "boxstyle": "round,pad=0.2",
+            "facecolor": "white",
+            "edgecolor": "#bdc3c7",
+            "alpha": 0.9,
+        },
+    }

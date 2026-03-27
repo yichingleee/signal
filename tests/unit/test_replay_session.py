@@ -67,6 +67,7 @@ def test_finalize_open_positions_records_trade_and_clears_position() -> None:
     assert len(completed_trades) == 1
     assert completed_trades[0].final_leave_cause == "timeExit"
     assert completed_trades[0].pnl == 10.0
+    assert completed_trades[0].exit_price == 11.0
     assert log_writer.leave_rows == [("2330", "timeExit")]
 
 
@@ -91,4 +92,5 @@ def test_finalize_exit_time_uses_last_match_time() -> None:
     )
 
     assert completed_trades[0].exit_time_raw == exit_time
+    assert completed_trades[0].exit_price == 11.0
     assert fmt_time(exit_time) == "13:25:00"

@@ -10,8 +10,40 @@ def generate_daily_charts(
     trades: list[TradeRecord],
     funnel: FunnelTracker | None,
     log_dir: str,
+    trade_date: str = "",
+    data_dir: str = "./data/",
+    prev_day_limit_up: dict[str, bool] | None = None,
 ) -> None:
     """Generate all per-day charts. Called from _generate_reports()."""
+    traded_symbols = {trade.symbol for trade in trades if trade.symbol}
+    if traded_symbols and trade_date:
+        from tw_signal_engine.reporting.build_trade_day_chart_manifest import write_trade_day_chart_manifest
+        from tw_signal_engine.reporting.build_trade_day_traces import build_trade_day_traces, build_trade_markers
+        from tw_signal_engine.reporting.charts.trade_day_models import SymbolTradeDay
+        from tw_signal_engine.reporting.charts.trade_day_timeline import plot_trade_day_timeline
+
+        traces_by_symbol = build_trade_day_traces(
+            trade_date=trade_date,
+            data_dir=data_dir,
+            traded_symbols=traded_symbols,
+            prev_day_limit_up=prev_day_limit_up or {},
+        )
+        markers_by_symbol = build_trade_markers(trades)
+
+        generated_symbols: list[str] = []
+        for symbol in sorted(traded_symbols):
+            points = traces_by_symbol.get(symbol, [])
+            markers = markers_by_symbol.get(symbol, [])
+            if not points or not markers:
+                continue
+            plot_trade_day_timeline(
+                SymbolTradeDay(symbol=symbol, points=points, markers=markers),
+                log_dir,
+            )
+            generated_symbols.append(symbol)
+
+        write_trade_day_chart_manifest(log_dir, generated_symbols, markers_by_symbol)
+
     if len(trades) < 2:
         return
 
