@@ -99,6 +99,7 @@ def on_tick_exit(
             raw_member_rank=ot.raw_member_rank,
             m1_symbol=ot.m1_symbol,
             entry_price=ot.entry_price,
+            exit_price=price / PRICE_SCALE,
             entry_vwap=ot.entry_vwap,
             day_high_at_entry=ot.day_high_at_entry,
             prev_close=ot.prev_close,

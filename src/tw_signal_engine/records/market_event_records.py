@@ -53,6 +53,7 @@ class TradeRecord:
     raw_member_rank: int = 0
     m1_symbol: str = ""
     entry_price: float = 0.0
+    exit_price: float = 0.0
     entry_vwap: float = 0.0
     day_high_at_entry: float = 0.0
     prev_close: float = 0.0

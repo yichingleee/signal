@@ -283,7 +283,7 @@ def run_daily_replay(
                 )
                 _generate_reports(
                     completed_trades, log_dir, market_gate.market_open_chg_pct,
-                    funnel, trade_date, no_charts,
+                    funnel, trade_date, no_charts, data_dir, prev_day_lu,
                 )
                 log_writer.close()
                 return completed_trades
@@ -435,7 +435,16 @@ def run_daily_replay(
     )
 
     # 9. Generate reports
-    _generate_reports(completed_trades, log_dir, market_gate.market_open_chg_pct, funnel, trade_date, no_charts)
+    _generate_reports(
+        completed_trades,
+        log_dir,
+        market_gate.market_open_chg_pct,
+        funnel,
+        trade_date,
+        no_charts,
+        data_dir,
+        prev_day_lu,
+    )
     log_writer.close()
 
     print(f"[TIMING] TOTAL: {(time.time() - t_start) * 1000:.0f} ms")
@@ -451,6 +460,8 @@ def _generate_reports(
     funnel: FunnelTracker | None = None,
     trade_date: str = "",
     no_charts: bool = False,
+    data_dir: str = "./data/",
+    prev_day_limit_up: dict[str, bool] | None = None,
 ) -> None:
     write_trade_report(completed_trades, log_dir, market_open_chg_pct)
     write_summary_report(completed_trades, log_dir)
@@ -472,6 +483,13 @@ def _generate_reports(
     if not no_charts:
         try:
             from tw_signal_engine.reporting.generate_charts import generate_daily_charts
-            generate_daily_charts(completed_trades, funnel, log_dir)
+            generate_daily_charts(
+                completed_trades,
+                funnel,
+                log_dir,
+                trade_date=trade_date,
+                data_dir=data_dir,
+                prev_day_limit_up=prev_day_limit_up,
+            )
         except ImportError:
             pass
