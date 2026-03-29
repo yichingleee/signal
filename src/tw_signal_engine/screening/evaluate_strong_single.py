@@ -6,6 +6,7 @@ from tw_signal_engine.config.strategy_config import StrongSingleConfig
 from tw_signal_engine.market_data.market_data_records import LinearVolumeTracker
 from tw_signal_engine.records.reference_records import ReferenceSymbol
 from tw_signal_engine.screening.top_volume_pool import TopKVolumeTracker
+from tw_signal_engine.server.dashboard_snapshot import SingleSnapshot
 from tw_signal_engine.state.symbol_state import IndexData
 
 DAY_PER_MONTH = 20
@@ -31,6 +32,7 @@ class StrongSingleEvaluator:
         self.forbidden: dict[str, bool] = {}
         self._vol_cumu: dict[str, int] = {}
         self._max_price_amp: dict[str, float] = {}
+        self._qualified: dict[str, bool] = {}
 
         # Precomputed month totals (filled during initialize_validity / _is_symbol_valid)
         self._month_total_tv: dict[str, int] = {}
@@ -66,9 +68,11 @@ class StrongSingleEvaluator:
         match_time_us: int, match_time_str: int,
     ) -> bool:
         if not self.config.enabled:
+            self._qualified[symbol] = False
             return False
 
         if not self._is_symbol_valid(symbol):
+            self._qualified[symbol] = False
             return False
 
         self._vol_cumu[symbol] = self._vol_cumu.get(symbol, 0) + qty
@@ -81,7 +85,9 @@ class StrongSingleEvaluator:
         cond3 = self._eval_vwap_cond(idx, symbol, price, match_time_str)
         cond4 = self._eval_extreme_filter(symbol, price)
 
-        return in_pool and cond1 and cond2 and cond3 and cond4
+        result = in_pool and cond1 and cond2 and cond3 and cond4
+        self._qualified[symbol] = result
+        return result
 
     def _eval_price_cond(self, idx: IndexData, symbol: str, price: int) -> bool:
         if idx.day_low <= 0:
@@ -141,3 +147,44 @@ class StrongSingleEvaluator:
             return True
         pct_chg = (price - prev_close) / prev_close
         return pct_chg < self.config.extreme_price_increase_limit
+
+    def to_snapshot(
+        self,
+        idx_map: dict[str, IndexData],
+        last_price: dict[str, int],
+        symbol_to_group: dict[str, str] | None = None,
+    ) -> list[SingleSnapshot]:
+        """Serialize currently-qualified strong-single symbols for dashboard usage."""
+        result: list[SingleSnapshot] = []
+        for symbol, qualified in self._qualified.items():
+            if not qualified:
+                continue
+            idx = idx_map.get(symbol)
+            if idx is None:
+                continue
+            ref = self.f1_map.get(symbol)
+            if ref is None:
+                continue
+            prev_close = self._prev_close_cache.get(symbol, ref.previous_close * 10000)
+            price_raw = last_price.get(symbol, 0)
+            vwap_raw = idx.vwap
+            pct_chg = (price_raw - prev_close) / prev_close if prev_close > 0 else 0.0
+            vwap_pct_chg = (vwap_raw - prev_close) / prev_close if prev_close > 0 else 0.0
+            month_avg = self._month_avg_tv.get(symbol, 0)
+            cum_vol_ratio = self._vol_cumu.get(symbol, 0) / (month_avg / 10000) if month_avg > 0 else 0.0
+            result.append(
+                SingleSnapshot(
+                    symbol=symbol,
+                    name=ref.name,
+                    group_name=(symbol_to_group or {}).get(symbol, ""),
+                    price=price_raw / 10000,
+                    pct_chg=pct_chg,
+                    vwap=vwap_raw / 10000,
+                    vwap_pct_chg=vwap_pct_chg,
+                    cum_vol_ratio=cum_vol_ratio,
+                    vol_shrink_ratio=0.0,
+                )
+            )
+
+        result.sort(key=lambda s: s.vwap_pct_chg, reverse=True)
+        return result

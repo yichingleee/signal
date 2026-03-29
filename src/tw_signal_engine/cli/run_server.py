@@ -138,6 +138,7 @@ def _start_live_mode(args: argparse.Namespace) -> None:
             use_cache=use_cache,
             provider=provider,
             hooks=hooks,
+            on_dashboard_snapshot=live_state.update_snapshot,
         )
         print("Engine thread finished")
 

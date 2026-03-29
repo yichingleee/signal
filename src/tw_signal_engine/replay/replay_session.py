@@ -7,7 +7,7 @@ from datetime import datetime
 
 from tw_signal_engine.config.load_legacy_ini import load_legacy_ini
 from tw_signal_engine.config.normalize_strategy_config import normalize_strategy_config
-from tw_signal_engine.config.strategy_config import NormalizedStrategyConfig
+from tw_signal_engine.config.strategy_config import ExecutionConfig, NormalizedStrategyConfig
 from tw_signal_engine.execution.create_entry_trade import execute_entry, should_enter
 from tw_signal_engine.execution.trade_ledger import on_tick_exit
 from tw_signal_engine.market_data.file_replay_provider import FileReplayProvider
@@ -17,6 +17,7 @@ from tw_signal_engine.market_data.market_data_records import LinearVolumeTracker
 from tw_signal_engine.market_data.paced_replay_provider import PacedReplayProvider
 from tw_signal_engine.market_data.providers import MarketDataProvider
 from tw_signal_engine.records.market_event_records import MarketTick, TradeRecord
+from tw_signal_engine.records.reference_records import ReferenceSymbol
 from tw_signal_engine.records.trade_records import EntryTrade
 from tw_signal_engine.reference_data.derive_prev_day_limit_up import derive_prev_day_limit_up
 from tw_signal_engine.reference_data.load_group_membership import load_group_membership
@@ -28,13 +29,292 @@ from tw_signal_engine.reporting.build_category_summary import write_category_rep
 from tw_signal_engine.reporting.build_daily_summary import write_summary_report
 from tw_signal_engine.reporting.build_trade_report_rows import write_trade_report
 from tw_signal_engine.reporting.write_order_log_csv import OrderLogWriter
-from tw_signal_engine.screening.evaluate_strong_group import StrongGroupEvaluator
+from tw_signal_engine.screening.evaluate_strong_group import MatchInfo, StrongGroupEvaluator
 from tw_signal_engine.screening.evaluate_strong_single import StrongSingleEvaluator
+from tw_signal_engine.server.dashboard_snapshot import (
+    ActivePosition,
+    CompletedTrade,
+    DashboardSnapshot,
+    PreparingEntry,
+    SignalAMonitorSnapshot,
+    SignalCounters,
+    SingleSnapshot,
+    VWAPMonitorEntry,
+)
 from tw_signal_engine.signals.evaluate_signal_a import evaluate_signal_a
 from tw_signal_engine.signals.evaluate_signal_b import evaluate_signal_b
 from tw_signal_engine.state.position_state import PositionState
 from tw_signal_engine.state.signal_state import SignalAState, SignalBState
 from tw_signal_engine.state.symbol_state import IndexCalc, IndexData
+
+PRICE_SCALE = 10000.0
+
+
+def _time_str_to_hhmmss(match_time_str: int) -> str:
+    """Convert match_time_str to HH:MM:SS string."""
+    raw = match_time_str // 1_000_000
+    seconds = raw % 100
+    raw //= 100
+    minutes = raw % 100
+    hours = raw // 100
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _signal_a_state_label(state: SignalAState) -> str:
+    if state.triggered:
+        return "triggered"
+    if state.forbidden:
+        return "forbidden"
+    if state.near_vwap:
+        return "near_vwap"
+    return "idle"
+
+
+def _status_label(
+    symbol: str,
+    sig_label: str,
+    pos: PositionState,
+    completed: list[TradeRecord],
+) -> str:
+    """Build a display status label for a symbol."""
+    if pos.stocks.get(symbol, 0) > 0:
+        return "持倉中"
+    for tr in reversed(completed):
+        if tr.symbol == symbol:
+            norm_cause = _normalize_exit_cause(tr.final_leave_cause)
+            if norm_cause == "take_profit":
+                return "停利出場"
+            if norm_cause == "stop_loss":
+                return "停損出場"
+            return "已出場"
+    if sig_label == "near_vwap":
+        return "接近VWAP"
+    if sig_label == "forbidden":
+        return "禁止"
+    return ""
+
+
+def _normalize_exit_cause(cause: str) -> str:
+    normalized = cause.strip()
+    if normalized in ("takeProfit", "take_profit", "take_profit_sell"):
+        return "take_profit"
+    if normalized in ("stopLoss", "stop_loss", "stop_loss_sell"):
+        return "stop_loss"
+    if normalized in ("timeExit", "time_exit", "lockedLimitUp", "locked_limit_up"):
+        return "time_exit"
+    if normalized in ("bailout", "bail_out"):
+        return "bailout"
+    return normalized or "unknown"
+
+
+def _estimate_take_profit(entry_price: float, day_high_at_entry: float, exec_config: ExecutionConfig) -> float:
+    if exec_config.take_profit_pcts:
+        base = entry_price if exec_config.tp_base_entry else day_high_at_entry
+        return base * (1 + exec_config.take_profit_pcts[0])
+    return day_high_at_entry
+
+
+def build_dashboard_snapshot(
+    match_time_str: int,
+    tick_count: int,
+    strong_group: StrongGroupEvaluator,
+    strong_single: StrongSingleEvaluator | None,
+    signal_a_map: dict[str, SignalAState],
+    pos: PositionState,
+    completed_trades: list[TradeRecord],
+    index_calc_map: dict[str, IndexCalc],
+    f1_map: dict[str, ReferenceSymbol],
+    exec_config: ExecutionConfig,
+    last_price: dict[str, int],
+    monitored_symbols: set[str] | None = None,
+) -> DashboardSnapshot:
+    """Build a full dashboard snapshot from current engine state."""
+    timestamp = _time_str_to_hhmmss(match_time_str)
+
+    # Collect index data for all symbols
+    idx_map: dict[str, IndexData] = {}
+    for sym, calc in index_calc_map.items():
+        idx_map[sym] = IndexData(
+            vwap=calc._price_vol_sum / calc._vol_sum if calc._vol_sum > 0 else 0.0,
+            day_high=calc._day_high,
+            day_low=calc._day_low,
+        )
+
+    # 1. Strong groups
+    groups = strong_group.to_snapshot(idx_map)
+
+    # 2. Build symbol → group name mapping from match_info
+    sym_group: dict[str, str] = {}
+    sym_match: dict[str, MatchInfo] = {}
+    for sym, mi in strong_group.last_match_info.items():
+        if mi.group_name:
+            sym_group[sym] = mi.group_name
+            sym_match[sym] = mi
+
+    # 3. Strong singles (if enabled)
+    singles: list[SingleSnapshot] = []
+    if strong_single is not None and strong_single.config.enabled:
+        singles = strong_single.to_snapshot(idx_map, last_price, sym_group)
+
+    # 4. VWAP monitor
+    vwap_entries: list[VWAPMonitorEntry] = []
+    symbols = set(monitored_symbols) if monitored_symbols is not None else set(idx_map.keys())
+    symbols.update(signal_a_map.keys())
+    symbols.update(pos.open_trades.keys())
+    for tr in completed_trades:
+        symbols.add(tr.symbol)
+
+    for sym in sorted(symbols):
+        idx = idx_map.get(sym)
+        if idx is None:
+            continue
+        ref = f1_map.get(sym)
+        name = ref.name if ref is not None else sym
+        prev_close = ref.previous_close if ref is not None else 0.0
+        price_raw = last_price.get(sym, 0)
+        vwap_raw = idx.vwap
+
+        sig_state = signal_a_map.get(sym)
+        sig_label = _signal_a_state_label(sig_state) if sig_state else "idle"
+        price = price_raw / PRICE_SCALE
+        vwap = vwap_raw / PRICE_SCALE
+        vwap_pct = (vwap - prev_close) / prev_close if prev_close > 0 else 0.0
+        pv_ratio = price / vwap if vwap > 0 else 0.0
+
+        vwap_entries.append(
+            VWAPMonitorEntry(
+                symbol=sym,
+                name=name,
+                group_name=sym_group.get(sym, ""),
+                price=price,
+                vwap=vwap,
+                vwap_pct=vwap_pct,
+                pv_ratio=pv_ratio,
+                signal_a_state=sig_label,
+                status=_status_label(sym, sig_label, pos, completed_trades),
+            )
+        )
+
+    # 5. Signal A monitor
+    preparing: list[PreparingEntry] = []
+    entered: list[ActivePosition] = []
+    exited: list[CompletedTrade] = []
+    counters = SignalCounters()
+
+    for sym, sa_state in signal_a_map.items():
+        if sa_state.forbidden:
+            counters.forbidden += 1
+        elif sa_state.triggered and sym not in pos.open_trades:
+            # Triggered but not entered (possibly exited or filtered)
+            pass
+        elif sa_state.near_vwap and sym not in pos.open_trades:
+            # Near VWAP + check if screening qualified
+            match_info = sym_match.get(sym)
+            if match_info and match_info.group_rank > 0:
+                counters.qualified += 1
+                ref = f1_map.get(sym)
+                name = ref.name if ref is not None else sym
+                idx = idx_map.get(sym)
+                price_raw = last_price.get(sym, 0)
+                vwap_raw = idx.vwap if idx else 0.0
+                day_low = idx.day_low if idx else 0
+                stop_loss = (vwap_raw / PRICE_SCALE) * exec_config.stop_loss_ratio_a
+                low_near = sa_state.low_since_near if sa_state.low_since_near > 0 else price_raw
+                distance = (price_raw - low_near) / low_near if low_near > 0 else 0.0
+
+                preparing.append(
+                    PreparingEntry(
+                        symbol=sym,
+                        name=name,
+                        group_name=match_info.group_name,
+                        group_tag=f"G{match_info.group_rank} {match_info.group_name}",
+                        order_price=price_raw / PRICE_SCALE,
+                        current_price=price_raw / PRICE_SCALE,
+                        distance_pct=distance,
+                        vwap=vwap_raw / PRICE_SCALE,
+                        day_low=day_low / PRICE_SCALE if day_low < 2**60 else 0.0,
+                        stop_loss=stop_loss,
+                        near_vwap_pv_ratio=sa_state.near_vwap_pv_ratio,
+                    )
+                )
+            else:
+                counters.not_qualified += 1
+        elif not sa_state.triggered and not sa_state.near_vwap and not sa_state.forbidden:
+            counters.not_qualified += 1
+
+    # Active positions
+    for sym, trade in pos.open_trades.items():
+        if trade.signal_type != "SignalA":
+            continue
+        counters.holding += 1
+        ref = f1_map.get(sym)
+        name = ref.name if ref is not None else sym
+        current_price = last_price.get(sym, 0) / PRICE_SCALE
+        entry_p = trade.entry_price
+        pnl = (current_price - entry_p) / entry_p if entry_p > 0 else 0.0
+        stop_loss = trade.entry_vwap * exec_config.stop_loss_ratio_a
+        take_profit = _estimate_take_profit(entry_p, trade.day_high_at_entry, exec_config)
+
+        entered.append(
+            ActivePosition(
+                symbol=sym,
+                name=name,
+                group_name=trade.group_name,
+                group_tag=f"G{trade.group_rank} {trade.group_name}",
+                entry_price=entry_p,
+                current_price=current_price,
+                pnl_pct=pnl,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                day_high=trade.day_high_at_entry,
+                entry_time=_time_str_to_hhmmss(trade.entry_time_raw),
+            )
+        )
+
+    # Completed trades
+    for tr in completed_trades:
+        if tr.signal_type != "SignalA":
+            continue
+        ref = f1_map.get(tr.symbol)
+        name = ref.name if ref is not None else tr.symbol
+        cause = _normalize_exit_cause(tr.final_leave_cause)
+        if cause == "take_profit":
+            counters.take_profit += 1
+        elif cause == "stop_loss":
+            counters.stop_loss += 1
+        pnl_ratio = tr.return_pct / 100.0
+
+        exited.append(
+            CompletedTrade(
+                symbol=tr.symbol,
+                name=name,
+                group_name=tr.group_name,
+                group_tag=f"G{tr.group_rank} {tr.group_name}" if tr.group_rank > 0 else tr.group_name,
+                entry_price=tr.entry_price,
+                exit_price=tr.entry_price * (1 + pnl_ratio) if tr.entry_price > 0 else 0.0,
+                pnl_pct=pnl_ratio,
+                entry_time=_time_str_to_hhmmss(tr.entry_time_raw),
+                exit_time=_time_str_to_hhmmss(tr.exit_time_raw),
+                exit_cause=cause,
+            )
+        )
+
+    signal_a = SignalAMonitorSnapshot(
+        preparing=preparing,
+        entered=entered,
+        exited=exited,
+        counters=counters,
+    )
+
+    return DashboardSnapshot(
+        timestamp=timestamp,
+        time_raw=match_time_str,
+        tick_count=tick_count,
+        groups=groups,
+        singles=singles,
+        vwap_monitor=vwap_entries,
+        signal_a=signal_a,
+    )
 
 
 def _compute_log_dir(date: str, log_folder: str = "") -> str:
@@ -135,6 +415,7 @@ def run_daily_replay(
     hooks: SessionHooks | None = None,
     enable_snapshots: bool = False,
     snapshot_dir: str = "./cache/replay/",
+    on_dashboard_snapshot: object | None = None,
 ) -> list[TradeRecord]:
     """Run a single-day replay and return completed trades.
 
@@ -251,9 +532,24 @@ def run_daily_replay(
 
         def _snapshot_on_minute(match_time_str: int) -> None:
             assert snapshot_writer is not None
+            dashboard_snapshot = build_dashboard_snapshot(
+                match_time_str,
+                tick_count,
+                strong_group,
+                strong_single if config.strong_single.enabled else None,
+                signal_a_map,
+                pos,
+                completed_trades,
+                index_calc_map,
+                f1_map,
+                config.execution,
+                last_price,
+                monitored_symbols=tick_filter,
+            )
             snapshot_writer.capture(
                 match_time_str, strong_group, signal_a_map, signal_b_map,
                 pos, market_gate, completed_trades,
+                dashboard_snapshot=dashboard_snapshot.to_dict(),
             )
             if _user_on_minute:
                 _user_on_minute(match_time_str)
@@ -273,6 +569,34 @@ def run_daily_replay(
         hooks.on_minute = _snapshot_on_minute
         hooks.on_entry = _snapshot_on_entry
         hooks.on_exit = _snapshot_on_exit
+
+    # Wire dashboard snapshot hook (for live server)
+    if on_dashboard_snapshot is not None:
+        if hooks is None:
+            hooks = SessionHooks()
+
+        _prev_on_minute = hooks.on_minute
+
+        def _dashboard_on_minute(match_time_str: int) -> None:
+            if _prev_on_minute:
+                _prev_on_minute(match_time_str)
+            snap = build_dashboard_snapshot(
+                match_time_str,
+                tick_count,
+                strong_group,
+                strong_single if config.strong_single.enabled else None,
+                signal_a_map,
+                pos,
+                completed_trades,
+                index_calc_map,
+                f1_map,
+                config.execution,
+                last_price,
+                monitored_symbols=tick_filter,
+            )
+            on_dashboard_snapshot(snap)  # type: ignore[operator]
+
+        hooks.on_minute = _dashboard_on_minute
 
     # 7. Run replay
     t0 = time.time()

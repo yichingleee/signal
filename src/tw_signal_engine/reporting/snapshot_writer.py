@@ -84,6 +84,7 @@ class SnapshotWriter:
         pos: PositionState,
         market_gate: MarketGate,
         completed_trades: list[TradeRecord],
+        dashboard_snapshot: dict[str, Any] | None = None,
     ) -> None:
         """Capture current state as a snapshot row at a minute boundary."""
         minutes = _time_str_to_minutes(match_time_str)
@@ -133,6 +134,24 @@ class SnapshotWriter:
                 })
         self._last_trade_count = len(completed_trades)
 
+        dashboard_groups: list[dict[str, Any]] = []
+        dashboard_singles: list[dict[str, Any]] = []
+        dashboard_vwap: list[dict[str, Any]] = []
+        dashboard_signal_a: dict[str, Any] = {}
+        if dashboard_snapshot is not None:
+            groups_raw = dashboard_snapshot.get("groups")
+            singles_raw = dashboard_snapshot.get("singles")
+            vwap_raw = dashboard_snapshot.get("vwap_monitor")
+            signal_a_raw = dashboard_snapshot.get("signal_a")
+            if isinstance(groups_raw, list):
+                dashboard_groups = [g for g in groups_raw if isinstance(g, dict)]
+            if isinstance(singles_raw, list):
+                dashboard_singles = [s for s in singles_raw if isinstance(s, dict)]
+            if isinstance(vwap_raw, list):
+                dashboard_vwap = [v for v in vwap_raw if isinstance(v, dict)]
+            if isinstance(signal_a_raw, dict):
+                dashboard_signal_a = signal_a_raw
+
         self._rows.append({
             "timestamp": minutes,
             "time_str": _minutes_to_hhmm(minutes),
@@ -144,6 +163,10 @@ class SnapshotWriter:
             "completed_trades": json.dumps(new_trades, ensure_ascii=False),
             "market_disabled": market_gate.market_disabled,
             "total_trades": len(completed_trades),
+            "dashboard_groups": json.dumps(dashboard_groups, ensure_ascii=False),
+            "dashboard_singles": json.dumps(dashboard_singles, ensure_ascii=False),
+            "dashboard_vwap": json.dumps(dashboard_vwap, ensure_ascii=False),
+            "dashboard_signal_a": json.dumps(dashboard_signal_a, ensure_ascii=False),
         })
 
     def finalize(self) -> Path | None:

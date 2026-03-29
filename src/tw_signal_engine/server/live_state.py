@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import threading
+from dataclasses import asdict
 from typing import Any
 
 from tw_signal_engine.records.market_event_records import MarketTick, TradeRecord
 from tw_signal_engine.records.trade_records import EntryTrade
 from tw_signal_engine.replay.session_hooks import SessionHooks
+from tw_signal_engine.server.dashboard_snapshot import (
+    DashboardSnapshot,
+    SignalAMonitorSnapshot,
+)
 from tw_signal_engine.state.symbol_state import IndexData
 
 
@@ -30,6 +35,7 @@ class LiveState:
         self._recent_signals: list[dict[str, Any]] = []
         self._screening_hits: list[dict[str, Any]] = []
         self._market_disabled: bool = False
+        self._dashboard_snapshot: DashboardSnapshot | None = None
 
     def build_hooks(self) -> SessionHooks:
         """Create SessionHooks that update this live state."""
@@ -123,3 +129,40 @@ class LiveState:
                 "entry_time_raw": record.entry_time_raw,
                 "exit_time_raw": record.exit_time_raw,
             })
+
+    # ── Dashboard snapshot methods ───────────────────────────────────
+
+    def update_snapshot(self, snapshot: DashboardSnapshot) -> None:
+        """Called from on_minute hook with the latest snapshot."""
+        with self._lock:
+            self._dashboard_snapshot = snapshot
+
+    def get_dashboard_groups(self) -> list[dict[str, Any]]:
+        with self._lock:
+            if self._dashboard_snapshot is None:
+                return []
+            return [asdict(g) for g in self._dashboard_snapshot.groups]
+
+    def get_dashboard_singles(self) -> list[dict[str, Any]]:
+        with self._lock:
+            if self._dashboard_snapshot is None:
+                return []
+            return [asdict(s) for s in self._dashboard_snapshot.singles]
+
+    def get_dashboard_vwap(self) -> list[dict[str, Any]]:
+        with self._lock:
+            if self._dashboard_snapshot is None:
+                return []
+            return [asdict(v) for v in self._dashboard_snapshot.vwap_monitor]
+
+    def get_dashboard_signal_a(self) -> dict[str, Any]:
+        with self._lock:
+            if self._dashboard_snapshot is None:
+                return asdict(SignalAMonitorSnapshot())
+            return asdict(self._dashboard_snapshot.signal_a)
+
+    def get_dashboard_snapshot_dict(self) -> dict[str, Any] | None:
+        with self._lock:
+            if self._dashboard_snapshot is None:
+                return None
+            return self._dashboard_snapshot.to_dict()
