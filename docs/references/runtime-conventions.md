@@ -127,6 +127,26 @@ Columns:
 - `report_summary.csv`: total trades, PnL, win rate, drawdown, and average holding metrics
 - `report_by_category.csv`: rollups by signal type, enter cause, and leave cause
 
+### Chart artifacts
+
+When charts are enabled (default), daily replay output includes:
+
+- aggregate charts (existing files such as `chart_equity_curve.png`, `chart_pnl_distribution.png`, etc.) when there are at least 2 trades
+- per-traded-symbol timeline charts for any day with at least 1 completed trade:
+  - `chart_trade_day_<symbol>.png`
+- per-symbol chart manifest:
+  - `report_trade_day_charts.csv`
+
+Per-symbol timeline charts annotate:
+
+- replay-granularity traded-price line
+- session cumulative VWAP line
+- signal markers with signal type and enter-cause reason
+- entry markers with enter-cause reason
+- exit markers with leave-cause reason
+
+`--no-charts` remains the global kill-switch and disables both aggregate and per-symbol charts.
+
 ## Validation Commands
 
 ```bash

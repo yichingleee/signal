@@ -53,6 +53,7 @@ class TradeRecord:
     raw_member_rank: int = 0
     m1_symbol: str = ""
     entry_price: float = 0.0
+    exit_price: float = 0.0
     entry_vwap: float = 0.0
     day_high_at_entry: float = 0.0
     prev_close: float = 0.0
@@ -63,3 +64,21 @@ class TradeRecord:
     had_circuit_breaker: bool = False
     group_limit_up_count: int = 0
     market_entry_chg_pct: float = 0.0
+    # Trade path fields
+    mae_pct: float = 0.0
+    mfe_pct: float = 0.0
+    mae_price: float = 0.0
+    mfe_price: float = 0.0
+    time_to_first_tp_sec: int = 0
+    tp_slices_filled: int = 0
+    tp_pnl: float = 0.0
+    residual_pnl: float = 0.0
+    # Cost model fields
+    gross_pnl: float = 0.0
+    commission: float = 0.0
+    tax: float = 0.0
+    slippage: float = 0.0
+    net_pnl: float = 0.0
+    # Context fields
+    trade_date: str = ""
+    entry_hour_bucket: str = ""

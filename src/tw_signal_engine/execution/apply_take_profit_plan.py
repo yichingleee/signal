@@ -11,6 +11,7 @@ def check_take_profit(
     symbol: str,
     price: int,
     pos: PositionState,
+    match_time_str: int = 0,
 ) -> bool:
     """Check and fill take-profit orders. Returns True if any filled."""
     orders = pos.orders.get(symbol, [])
@@ -26,6 +27,16 @@ def check_take_profit(
             pos.symbol_cash[symbol] = pos.symbol_cash.get(symbol, 0.0) + income
             pos.stocks[symbol] = pos.stocks.get(symbol, 0) - qty
             ever_taken = True
+            # Track TP slice fills on the open trade
+            ot = pos.open_trades.get(symbol)
+            if ot is not None:
+                ot.tp_slices_filled += 1
+                # Track profit (not revenue) relative to entry price
+                entry_price_int = int(ot.entry_price * PRICE_SCALE + 0.5)
+                tp_profit = qty * (order_price - entry_price_int) / PRICE_SCALE
+                ot.tp_realized_pnl += tp_profit
+                if ot.first_tp_time_raw == 0 and match_time_str > 0:
+                    ot.first_tp_time_raw = match_time_str
         else:
             remaining.append((order_price, qty))
     pos.orders[symbol] = remaining

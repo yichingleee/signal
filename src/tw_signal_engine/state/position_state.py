@@ -22,3 +22,6 @@ class PositionState:
     reserve_stocks: dict[str, float] = field(default_factory=dict)
     limit_up_prices: dict[str, int] = field(default_factory=dict)
     trades_entered_today: int = 0
+    # MAE/MFE tracking: per-symbol lowest/highest price since entry
+    trade_low: dict[str, int] = field(default_factory=dict)
+    trade_high: dict[str, int] = field(default_factory=dict)

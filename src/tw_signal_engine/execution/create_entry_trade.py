@@ -26,33 +26,33 @@ def should_enter(
     p0050_latest: int,
     market_open_chg_pct: float,
     strong_single_forbidden: dict[str, bool] | None = None,
-) -> bool:
-    """Check all entry filters. Returns True if entry is allowed."""
+) -> tuple[bool, str | None]:
+    """Check all entry filters. Returns (allowed, block_reason)."""
     if tick.match_time_str >= config.entry_time_limit:
-        return False
+        return False, "entry_time_limit"
     if config.filter_prev_day_limit_up and tick.prev_limit_up:
-        return False
+        return False, "prev_day_limit_up"
     if config.no_entry_friday and is_friday:
-        return False
+        return False, "no_entry_friday"
     if config.max_0050_entry_chg > 0 and p0050_prev > 0 and p0050_latest > 0:
         chg = (p0050_latest - p0050_prev) / p0050_prev * 100.0
         if chg >= config.max_0050_entry_chg:
-            return False
+            return False, "max_0050_entry_chg"
     if config.max_0050_intra_chg < 99 and p0050_prev > 0 and p0050_latest > 0:
         entry_chg = (p0050_latest - p0050_prev) / p0050_prev * 100.0
         intra_chg = entry_chg - market_open_chg_pct
         if intra_chg >= config.max_0050_intra_chg:
-            return False
+            return False, "max_0050_intra_chg"
     if config.disposition_stocks_enabled and tick.volatility_pause:
-        return False
+        return False, "volatility_pause"
     if pos.stocks.get(tick.symbol, 0) != 0:
-        return False
+        return False, "already_holding"
     if match_type == "StrongSingle" and strong_single_forbidden and strong_single_forbidden.get(tick.symbol, False):
-        return False
+        return False, "single_forbidden"
     current_price = (tick.ask[0].price if tick.ask[0].price > 0 else tick.match.price) / PRICE_SCALE
     if config.max_entry_price > 0 and current_price > config.max_entry_price:
-        return False
-    return True
+        return False, "max_entry_price"
+    return True, None
 
 
 def execute_entry(
@@ -93,6 +93,7 @@ def execute_entry(
         entry_vwap=idx.vwap / 10000.0,
         day_high_at_entry=idx.day_high / 10000.0,
         is_prev_day_lu=tick.prev_limit_up,
+        entry_qty=qty,
     )
 
     mi = strong_group.last_match_info.get(tick.symbol)

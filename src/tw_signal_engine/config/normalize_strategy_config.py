@@ -154,6 +154,9 @@ def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrat
         take_profit_pcts=[float(x) for x in tp_pcts_str.split(",") if x.strip()] if tp_pcts_str else [],
         reserve_limit_up_splits=int(_get(order_raw, "reserve_limit_up_splits", "0")),
         tp_base_entry=_bool(_get(order_raw, "tp_base_entry", "true")),
+        commission_rate=float(_get(order_raw, "commission_rate", "0")),
+        tax_rate=float(_get(order_raw, "tax_rate", "0")),
+        slippage_bps=float(_get(order_raw, "slippage_bps", "0")),
     )
 
     # Live config (optional section)
