@@ -15,6 +15,14 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.10",
 ]
+live = [
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+    "python-socketio>=5.11",
+    "redis>=5.0",
+    "pandas>=2.2",
+    "pyarrow>=15.0",
+]
 
 [build-system]
 requires = ["hatchling"]

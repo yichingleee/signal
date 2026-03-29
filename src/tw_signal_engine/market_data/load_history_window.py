@@ -18,7 +18,12 @@ logger = logging.getLogger(__name__)
 DAY_PER_MONTH = 20
 
 
-def _find_history_files(market_type: str, date: str, data_dir: str = "./data/") -> list[tuple[str, str]]:
+def _find_history_files(
+    market_type: str,
+    date: str,
+    data_dir: str = "./data/",
+    require_target_file: bool = True,
+) -> list[tuple[str, str]]:
     """Find up to 20 prior-session replay files for the given market, before date.
 
     Returns list of (filepath, date_str) tuples, newest first.
@@ -39,7 +44,7 @@ def _find_history_files(market_type: str, date: str, data_dir: str = "./data/") 
             if len(file_date) == 8:
                 date_file_map[file_date] = str(entry)
 
-    if date not in date_file_map:
+    if require_target_file and date not in date_file_map:
         raise FileNotFoundError(f"Missing replay file for {market_type} on {date}: {target_file}")
 
     sorted_dates = sorted(date_file_map.keys())
@@ -95,6 +100,7 @@ def load_history_window(
     date: str,
     data_dir: str = "./data/",
     use_cache: bool = True,
+    require_target_file: bool = True,
 ) -> HistoryWindow:
     """Load prior-session history window.
 
@@ -104,8 +110,16 @@ def load_history_window(
 
     When use_cache is True (default), attempts to load from binary cache,
     building the cache on first access or when stale.
+
+    When require_target_file is False, allows Redis-only live startup where
+    same-day replay files are not present.
     """
-    files = _find_history_files(market_type, date, data_dir)
+    files = _find_history_files(
+        market_type,
+        date,
+        data_dir,
+        require_target_file=require_target_file,
+    )
 
     vol_cum: list[LinearVolumeTracker] = []
     trading_val: list[dict[str, int]] = []

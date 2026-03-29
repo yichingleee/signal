@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import signal
 import threading
+import time
+import traceback
 
 
 def main() -> None:
@@ -85,8 +87,20 @@ def _start_live_mode(args: argparse.Namespace) -> None:
 
     # Load history
     use_cache = not args.no_cache
-    hw_otc = load_history_window("OTC", args.date, args.data_dir, use_cache=use_cache)
-    hw_tse = load_history_window("TSE", args.date, args.data_dir, use_cache=use_cache)
+    hw_otc = load_history_window(
+        "OTC",
+        args.date,
+        args.data_dir,
+        use_cache=use_cache,
+        require_target_file=False,
+    )
+    hw_tse = load_history_window(
+        "TSE",
+        args.date,
+        args.data_dir,
+        use_cache=use_cache,
+        require_target_file=False,
+    )
     history = _merge_history_windows(hw_otc, hw_tse)
 
     # Build tick filter
@@ -125,26 +139,48 @@ def _start_live_mode(args: argparse.Namespace) -> None:
     )
 
     configure(mode="live", live_state=live_state)
+    live_state.mark_engine_running()
+
+    startup_error: list[BaseException] = []
 
     # Run engine in background thread
     def engine_thread() -> None:
-        run_daily_replay(
-            trade_date=args.date,
-            config_path=args.config,
-            data_dir=args.data_dir,
-            files_dir=args.files_dir,
-            group_file=args.group_file,
-            history=history,
-            use_cache=use_cache,
-            provider=provider,
-            hooks=hooks,
-            on_dashboard_snapshot=live_state.update_snapshot,
-        )
-        print("Engine thread finished")
+        try:
+            run_daily_replay(
+                trade_date=args.date,
+                config_path=args.config,
+                data_dir=args.data_dir,
+                files_dir=args.files_dir,
+                group_file=args.group_file,
+                history=history,
+                use_cache=use_cache,
+                provider=provider,
+                hooks=hooks,
+                on_dashboard_snapshot=live_state.update_snapshot,
+            )
+            live_state.mark_engine_stopped()
+            print("Engine thread finished")
+        except BaseException as exc:
+            startup_error.append(exc)
+            tb = traceback.format_exc()
+            live_state.set_fatal_error(str(exc), tb)
+            print("Engine thread crashed:")
+            print(tb)
 
     t = threading.Thread(target=engine_thread, daemon=True, name="engine")
     t.start()
     print(f"Engine thread started, subscribing to {len(tick_filter)} symbols")
+
+    # Fail fast when startup crashes before first tick.
+    deadline = time.time() + 1.0
+    while time.time() < deadline:
+        if not t.is_alive():
+            if startup_error:
+                raise RuntimeError("Live engine failed during startup") from startup_error[0]
+            break
+        if live_state.get_status().get("tick_count", 0) > 0:
+            break
+        time.sleep(0.05)
 
     # Graceful shutdown
     def on_signal(signum: int, frame: object) -> None:

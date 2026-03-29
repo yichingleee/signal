@@ -36,6 +36,9 @@ class LiveState:
         self._screening_hits: list[dict[str, Any]] = []
         self._market_disabled: bool = False
         self._dashboard_snapshot: DashboardSnapshot | None = None
+        self._engine_status: str = "starting"
+        self._fatal_error: str | None = None
+        self._fatal_traceback: str | None = None
 
     def build_hooks(self) -> SessionHooks:
         """Create SessionHooks that update this live state."""
@@ -49,11 +52,17 @@ class LiveState:
 
     def get_status(self) -> dict[str, Any]:
         with self._lock:
-            return {
+            status: dict[str, Any] = {
                 "mode": "live",
                 "tick_count": self._tick_count,
                 "last_time_str": self._last_time_str,
+                "engine_status": self._engine_status,
             }
+            if self._fatal_error is not None:
+                status["fatal_error"] = self._fatal_error
+            if self._fatal_traceback is not None:
+                status["fatal_traceback"] = self._fatal_traceback
+            return status
 
     def get_positions(self) -> dict[str, dict[str, Any]]:
         with self._lock:
@@ -73,6 +82,8 @@ class LiveState:
 
     def _on_tick(self, tick: MarketTick, idx: IndexData) -> None:
         with self._lock:
+            if self._engine_status == "starting":
+                self._engine_status = "running"
             self._tick_count += 1
             self._last_time_str = tick.match_time_str
             self._last_prices[tick.symbol] = tick.match.price
@@ -129,6 +140,22 @@ class LiveState:
                 "entry_time_raw": record.entry_time_raw,
                 "exit_time_raw": record.exit_time_raw,
             })
+
+    def mark_engine_running(self) -> None:
+        with self._lock:
+            if self._engine_status == "starting":
+                self._engine_status = "running"
+
+    def mark_engine_stopped(self) -> None:
+        with self._lock:
+            if self._engine_status != "fatal":
+                self._engine_status = "stopped"
+
+    def set_fatal_error(self, message: str, traceback_text: str) -> None:
+        with self._lock:
+            self._engine_status = "fatal"
+            self._fatal_error = message
+            self._fatal_traceback = traceback_text
 
     # ── Dashboard snapshot methods ───────────────────────────────────
 

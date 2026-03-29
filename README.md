@@ -35,6 +35,12 @@ uv run python -m tw_signal_engine.cli.run_batch_replay \
   --config exec/cfg/parameter.cfg
 ```
 
+For live/server workflows, install live runtime dependencies:
+
+```bash
+uv sync --extra live
+```
+
 ## Repository Guide
 
 - Repo map for agents and contributors: [AGENTS.md](AGENTS.md)

@@ -51,8 +51,20 @@ def main() -> None:
 
     # 3. Load history
     use_cache = not args.no_cache
-    hw_otc = load_history_window("OTC", args.date, args.data_dir, use_cache=use_cache)
-    hw_tse = load_history_window("TSE", args.date, args.data_dir, use_cache=use_cache)
+    hw_otc = load_history_window(
+        "OTC",
+        args.date,
+        args.data_dir,
+        use_cache=use_cache,
+        require_target_file=False,
+    )
+    hw_tse = load_history_window(
+        "TSE",
+        args.date,
+        args.data_dir,
+        use_cache=use_cache,
+        require_target_file=False,
+    )
     history = _merge_history_windows(hw_otc, hw_tse)
 
     # 4. Build replay universe (tick filter)
