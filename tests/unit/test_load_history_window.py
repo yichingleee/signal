@@ -14,6 +14,23 @@ def test_load_history_window_requires_target_day_file(tmp_path) -> None:
         load_history_window("OTC", "20260129", str(tmp_path))
 
 
+def test_load_history_window_allows_missing_target_file_for_live_mode(tmp_path) -> None:
+    (tmp_path / "OTCQuote.20260128").write_text(
+        "Trade,SYM1,90000000000,0,100000,10\n",
+        encoding="utf-8",
+    )
+
+    hw = load_history_window(
+        "OTC",
+        "20260129",
+        str(tmp_path),
+        require_target_file=False,
+    )
+
+    assert hw.num_days == 1
+    assert hw.source_dates == ["20260128"]
+
+
 def test_history_window_excludes_target_date(tmp_path) -> None:
     """The target replay date should NOT appear in history slots."""
     # Create target date and two prior dates

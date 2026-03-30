@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from tw_signal_engine.config.strategy_config import StrongGroupConfig
 from tw_signal_engine.market_data.market_data_records import LinearVolumeTracker
 from tw_signal_engine.records.reference_records import ReferenceSymbol
+from tw_signal_engine.server.dashboard_snapshot import GroupSnapshot, MemberSnapshot
 from tw_signal_engine.state.group_state import GroupRank
 from tw_signal_engine.state.symbol_state import IndexData
 
@@ -298,6 +299,67 @@ class StrongGroupEvaluator:
             if limit_up > 0 and self.price_last[sym] >= limit_up:
                 count += 1
         return count
+
+    def to_snapshot(self, idx_map: dict[str, IndexData]) -> list[GroupSnapshot]:
+        """Serialize current group rankings and members to dashboard format."""
+        result: list[GroupSnapshot] = []
+        for _gain, group_name in self.group_rank.iter_ranked():
+            members_ranked = self.group_member_vwap_rank.get(group_name)
+            if members_ranked is None:
+                continue
+
+            member_snapshots: list[MemberSnapshot] = []
+            for rank_idx, (vwap_pct, sym) in enumerate(
+                members_ranked.iter_ranked(), 1
+            ):
+                ref = self.f1_map.get(sym)
+                name = ref.name if ref else sym
+                price_raw = self.price_last.get(sym, 0)
+                idx = idx_map.get(sym)
+                vwap_raw = idx.vwap if idx else 0.0
+
+                vol_cumu = self.vol_cumu.get(sym, 0)
+                month_avg = self._month_avg_tv.get(sym, 0)
+                cum_vol_ratio = (
+                    vol_cumu / (month_avg / 10000) if month_avg > 0 else 0.0
+                )
+
+                member_snapshots.append(
+                    MemberSnapshot(
+                        symbol=sym,
+                        name=name,
+                        price=price_raw / 10000,
+                        pct_chg=self._percentage_chg(sym, price_raw),
+                        vwap=vwap_raw / 10000,
+                        vwap_pct_chg=vwap_pct,
+                        cum_vol_ratio=cum_vol_ratio,
+                        vol_shrink_ratio=0.0,
+                        member_rank=rank_idx,
+                    )
+                )
+
+            avg_pct = self._group_percentage_chg(
+                group_name, self.config.is_weighted_avg
+            )
+            group_tv_cumu = self.group_trading_value_cumu.get(group_name, 0)
+            group_tv_month = self.group_trading_value_month_avg_sum.get(
+                group_name, 1
+            )
+            vol_ratio = (
+                group_tv_cumu / group_tv_month if group_tv_month > 0 else 0.0
+            )
+
+            result.append(
+                GroupSnapshot(
+                    group_name=group_name,
+                    group_rank=self.group_rank.get_rank(group_name),
+                    avg_pct_chg=avg_pct,
+                    vol_ratio=vol_ratio,
+                    avg_vol_surge=0.0,
+                    members=member_snapshots,
+                )
+            )
+        return result
 
     def is_single_allowed(self, symbol: str, max_rank: int) -> bool:
         """Check if a strong-single symbol is also ranked high enough in its groups."""

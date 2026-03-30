@@ -4,7 +4,7 @@ This `docs/` tree is the repository's system of record for durable project knowl
 
 ## Design Docs
 
-- [docs/design-docs/index.md](design-docs/index.md): architecture and namespace boundaries
+- [docs/design-docs/index.md](design-docs/index.md): architecture, namespace boundaries, live data integration, and dashboard
 
 ## Product Specs
 

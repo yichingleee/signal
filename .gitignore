@@ -64,6 +64,11 @@ runtime/caches/
 runtime/replay_runs/
 runtime/benchmarks/
 
+# Live data / dashboard
+cache/
+dashboard/node_modules/
+dashboard/*.tsbuildinfo
+
 # Local system files and generated artifacts
 .DS_Store
 artifacts/
