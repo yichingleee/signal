@@ -131,6 +131,10 @@ export function useDashboardData(): DashboardData {
   const jumpTo = useCallback(async (time: string) => {
     try {
       const result = await api.replayJump(time)
+      if (result.error) {
+        setError(typeof result.error === 'string' ? result.error : 'Replay jump failed')
+        return
+      }
       const snapshotData = normalizeReplaySnapshot(result.snapshot ?? result)
       if (snapshotData) {
         setSnapshot(snapshotData)

@@ -40,7 +40,7 @@ class RedisLiveProvider(MarketDataProvider):
         self._config = config
         self._tick_filter = tick_filter
         self._prev_day_limit_up = prev_day_limit_up or {}
-        self._queue: queue.Queue[MarketTick | None] = queue.Queue(maxsize=10000)
+        self._queue: queue.Queue[MarketTick | None] = queue.Queue()
         self._stop_event = threading.Event()
         self._num_tracker = NumTracker()
         # Buffer last trade line per symbol for Trade/Depth pairing
@@ -110,10 +110,7 @@ class RedisLiveProvider(MarketDataProvider):
         """Signal the provider to stop."""
         self._stop_event.set()
         # Push sentinel to unblock queue.get()
-        try:
-            self._queue.put_nowait(None)
-        except queue.Full:
-            pass
+        self._queue.put_nowait(None)
 
     def _listen(self) -> None:
         """Background thread: subscribe to Redis and push ticks to queue."""
@@ -219,7 +216,4 @@ class RedisLiveProvider(MarketDataProvider):
         trade_count = self._num_tracker.on_tick(tick.symbol, tick.match_time_us)
         tick.volatility_pause = trade_count <= 3
 
-        try:
-            self._queue.put(tick, timeout=5.0)
-        except queue.Full:
-            logger.warning("Tick queue full, dropping tick for %s", tick.symbol)
+        self._queue.put(tick)
