@@ -12,6 +12,7 @@ class TestSessionHooks:
         hooks = SessionHooks()
         assert hooks.on_tick is None
         assert hooks.on_screening is None
+        assert hooks.on_screening_detail is None
         assert hooks.on_signal is None
         assert hooks.on_entry is None
         assert hooks.on_exit is None

@@ -22,6 +22,40 @@ def _get_trading_dates(start: str, end: str, data_dir: str = "./data/") -> list[
     return result
 
 
+def _get_trading_dates_parquet(start: str, end: str, data_dir: str = "./data/") -> list[str]:
+    """Find all trading dates available under the parquet tick-data root.
+
+    A date counts when at least one of ``TWSE/<date>.parquet`` or
+    ``TPEX/<date>.parquet`` exists.
+    """
+    data_path = Path(data_dir)
+    available_dates: set[str] = set()
+    for subdir in ("TWSE", "TPEX"):
+        market_dir = data_path / subdir
+        if not market_dir.exists():
+            continue
+        for f in market_dir.iterdir():
+            name = f.name
+            if name.endswith(".parquet"):
+                stem = name[: -len(".parquet")]
+                if len(stem) == 8 and stem.isdigit():
+                    available_dates.add(stem)
+    return sorted(d for d in available_dates if start <= d <= end)
+
+
+def _split_dates_by_symbols_file(dates: list[str], files_dir: str) -> tuple[list[str], list[str]]:
+    """Split dates into (replayable, missing-symbols) for parquet guard."""
+    root = Path(files_dir)
+    ok: list[str] = []
+    missing: list[str] = []
+    for date in dates:
+        if (root / f"Symbols_{date}.csv").exists():
+            ok.append(date)
+        else:
+            missing.append(date)
+    return ok, missing
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run batch replay backtest")
     parser.add_argument("--start", required=True, help="Start date YYYYMMDD")
@@ -33,22 +67,47 @@ def main() -> None:
     parser.add_argument("--no-cache", action="store_true", help="Disable history cache")
     parser.add_argument("--no-charts", action="store_true", help="Skip chart generation")
     parser.add_argument("--cost-model", default="", help="Override cost params: 'commission=0.001425,tax=0.0015'")
+    parser.add_argument(
+        "--data-source",
+        choices=("text", "parquet"),
+        default="parquet",
+        help="Market-data ingestion path: new parquet root (default) or legacy text files",
+    )
     args = parser.parse_args()
 
+    from tw_signal_engine.market_data.parquet_history_loader import load_parquet_history_window
     from tw_signal_engine.market_data.rolling_history import RollingHistoryProvider
     from tw_signal_engine.records.market_event_records import TradeRecord
     from tw_signal_engine.replay.replay_session import _merge_history_windows, run_daily_replay
     from tw_signal_engine.reporting.generate_batch_reports import generate_batch_reports
 
-    dates = _get_trading_dates(args.start, args.end, args.data_dir)
+    if args.data_source == "parquet":
+        dates = _get_trading_dates_parquet(args.start, args.end, args.data_dir)
+        dates, missing_symbols_dates = _split_dates_by_symbols_file(dates, args.files_dir)
+        if missing_symbols_dates:
+            print(
+                "[GUARD] Skipping dates with missing Symbols files: "
+                + ", ".join(missing_symbols_dates)
+            )
+    else:
+        dates = _get_trading_dates(args.start, args.end, args.data_dir)
     print(f"Batch replay: {len(dates)} dates from {args.start} to {args.end}")
+
+    if not dates:
+        print("[GUARD] No replayable dates after Symbols-file guard; exiting.")
+        return
 
     batch_folder = datetime.now().strftime("%m%d_%H%M")
     use_cache = not args.no_cache
 
-    # Create rolling history providers for both markets
-    otc_provider = RollingHistoryProvider("OTC", args.data_dir, use_cache=use_cache)
-    tse_provider = RollingHistoryProvider("TSE", args.data_dir, use_cache=use_cache)
+    # Create rolling history providers for both markets — text path only.
+    # Parquet history loads are fast enough that the rolling-cache optimization
+    # is a wash; per the plan we just call load_parquet_history_window per date.
+    otc_provider: RollingHistoryProvider | None = None
+    tse_provider: RollingHistoryProvider | None = None
+    if args.data_source == "text":
+        otc_provider = RollingHistoryProvider("OTC", args.data_dir, use_cache=use_cache)
+        tse_provider = RollingHistoryProvider("TSE", args.data_dir, use_cache=use_cache)
 
     all_trades: list[TradeRecord] = []
 
@@ -57,9 +116,13 @@ def main() -> None:
         print(f"  Replaying {date}")
         print(f"{'=' * 40}")
         try:
-            # Get history from rolling providers (reuses loaded sessions)
-            hw_otc = otc_provider.get_history(date)
-            hw_tse = tse_provider.get_history(date)
+            if args.data_source == "parquet":
+                hw_otc = load_parquet_history_window("OTC", date, args.data_dir)
+                hw_tse = load_parquet_history_window("TSE", date, args.data_dir)
+            else:
+                assert otc_provider is not None and tse_provider is not None
+                hw_otc = otc_provider.get_history(date)
+                hw_tse = tse_provider.get_history(date)
             merged_history = _merge_history_windows(hw_otc, hw_tse)
 
             day_trades = run_daily_replay(
@@ -72,6 +135,7 @@ def main() -> None:
                 history=merged_history,
                 no_charts=args.no_charts,
                 cost_model_override=args.cost_model,
+                data_source=args.data_source,
             )
             all_trades.extend(day_trades)
         except Exception as e:

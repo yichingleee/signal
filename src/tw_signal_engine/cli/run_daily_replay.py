@@ -16,6 +16,12 @@ def main() -> None:
     parser.add_argument("--no-cache", action="store_true", help="Disable volume cache (keep data dir read-only)")
     parser.add_argument("--no-charts", action="store_true", help="Skip chart generation (CSV only)")
     parser.add_argument("--cost-model", default="", help="Override cost params: 'commission=0.001425,tax=0.0015'")
+    parser.add_argument(
+        "--data-source",
+        choices=("text", "parquet"),
+        default="parquet",
+        help="Market-data ingestion path: new parquet root (default) or legacy text files",
+    )
     args = parser.parse_args()
 
     from tw_signal_engine.replay.replay_session import run_daily_replay
@@ -30,6 +36,7 @@ def main() -> None:
         use_cache=not args.no_cache,
         no_charts=args.no_charts,
         cost_model_override=args.cost_model,
+        data_source=args.data_source,
     )
 
 

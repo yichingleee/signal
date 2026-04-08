@@ -3,26 +3,33 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from datetime import datetime
+from pathlib import Path
+from typing import Protocol
 
 from tw_signal_engine.config.load_legacy_ini import load_legacy_ini
 from tw_signal_engine.config.normalize_strategy_config import normalize_strategy_config
 from tw_signal_engine.config.strategy_config import NormalizedStrategyConfig
 from tw_signal_engine.execution.create_entry_trade import execute_entry, should_enter
 from tw_signal_engine.execution.trade_ledger import on_tick_exit
+from tw_signal_engine.market_data.day_bar_loader import load_0050_open
 from tw_signal_engine.market_data.file_replay_provider import FileReplayProvider
 from tw_signal_engine.market_data.history_window import HistoryWindow
 from tw_signal_engine.market_data.load_history_window import load_history_window
 from tw_signal_engine.market_data.market_data_records import LinearVolumeTracker, NumTracker
+from tw_signal_engine.market_data.parquet_history_loader import load_parquet_history_window
+from tw_signal_engine.market_data.parquet_io import to_int_price
+from tw_signal_engine.market_data.parquet_replay_provider import ParquetReplayProvider
 from tw_signal_engine.market_data.providers import MarketDataProvider
-from tw_signal_engine.records.market_event_records import MarketTick, TradeRecord
+from tw_signal_engine.records.market_event_records import MarketTick, QuotePair, TradeRecord
 from tw_signal_engine.reference_data.derive_prev_day_limit_up import derive_prev_day_limit_up
 from tw_signal_engine.reference_data.load_group_membership import load_group_membership
 from tw_signal_engine.reference_data.load_symbol_reference import load_symbol_reference
 from tw_signal_engine.replay.apply_market_gate import MarketGate
 from tw_signal_engine.replay.build_replay_universe import build_replay_universe
-from tw_signal_engine.replay.session_hooks import SessionHooks
+from tw_signal_engine.replay.iterate_market_file import iterate_market_file
+from tw_signal_engine.replay.session_hooks import ScreeningDetail, SessionHooks
 from tw_signal_engine.reporting.build_category_summary import write_category_report
 from tw_signal_engine.reporting.build_daily_summary import write_summary_report
 from tw_signal_engine.reporting.build_trade_report_rows import write_trade_report
@@ -46,11 +53,95 @@ from tw_signal_engine.state.signal_state import SignalAState, SignalBState
 from tw_signal_engine.state.symbol_state import IndexCalc, IndexData
 
 
+class _LeaveLogWriter(Protocol):
+    def write_leave(
+        self,
+        symbol: str,
+        time_str: int,
+        price: int,
+        cash: float,
+        symbol_cash: float,
+        cause: str,
+        remaining_qty: float,
+    ) -> None: ...
+
+
+class _OrderLogWriterLike(_LeaveLogWriter, Protocol):
+    def write_entry(
+        self,
+        symbol: str,
+        time_str: int,
+        price: int,
+        cash: float,
+        symbol_cash: float,
+        signal_type: str,
+        cause: str,
+        remaining_qty: float,
+        group_info: str,
+    ) -> None: ...
+
+    def close(self) -> None: ...
+
+
+class _NullOrderLogWriter:
+    """No-op order-log writer for diagnostic runs."""
+
+    def write_entry(
+        self,
+        symbol: str,
+        time_str: int,
+        price: int,
+        cash: float,
+        symbol_cash: float,
+        signal_type: str,
+        cause: str,
+        remaining_qty: float,
+        group_info: str,
+    ) -> None:
+        return None
+
+    def write_leave(
+        self,
+        symbol: str,
+        time_str: int,
+        price: int,
+        cash: float,
+        symbol_cash: float,
+        cause: str,
+        remaining_qty: float,
+    ) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
 def _compute_log_dir(date: str, log_folder: str = "") -> str:
     if log_folder:
         return f"./log/{log_folder}/{date}/"
     now = datetime.now()
     return f"./log/{date}_{now.strftime('%H%M')}/"
+
+
+def _symbols_file_missing(files_dir: str, trade_date: str) -> bool:
+    symbols_path = Path(files_dir) / f"Symbols_{trade_date}.csv"
+    return not symbols_path.exists()
+
+
+def _find_0050_proxy_text_dir(trade_date: str, data_dir: str) -> str | None:
+    """Find a legacy text replay root containing ``TSEQuote.<trade_date>``."""
+    candidate_roots = [
+        Path(data_dir),
+        Path(__file__).resolve().parents[3] / "exec" / "data",
+    ]
+    seen: set[Path] = set()
+    for root in candidate_roots:
+        if root in seen:
+            continue
+        seen.add(root)
+        if (root / f"TSEQuote.{trade_date}").exists():
+            return str(root)
+    return None
 
 
 def _finalize_open_positions(
@@ -60,7 +151,7 @@ def _finalize_open_positions(
     entry_signal_type: dict[str, str],
     entry_idx_map: dict[str, IndexData],
     completed_trades: list[TradeRecord],
-    log_writer: OrderLogWriter,
+    log_writer: _LeaveLogWriter,
     last_match_time_str: int,
     trade_date: str = "",
     hooks: SessionHooks | None = None,
@@ -330,11 +421,33 @@ def run_daily_replay(
     provider: MarketDataProvider | None = None,
     hooks: SessionHooks | None = None,
     on_dashboard_snapshot: Callable[[DashboardSnapshot], None] | None = None,
+    data_source: str = "text",
+    write_outputs: bool = True,
 ) -> list[TradeRecord]:
     """Run a single-day replay and return completed trades.
 
-    If history is provided, skip loading history from disk (used by batch mode).
+    ``data_source`` selects the market-data ingestion path:
+      * ``"text"``  — legacy ``TSEQuote/OTCQuote`` text files under ``data_dir``
+      * ``"parquet"`` — new parquet root with ``TWSE/<date>.parquet`` and
+        ``TPEX/<date>.parquet`` directories under ``data_dir``.
+
+    If ``provider`` is supplied it always wins (the live path passes its own
+    Redis provider). If ``history`` is supplied, history loading is skipped
+    (used by batch mode).
+
+    When ``write_outputs`` is False, the replay still computes screening/signal/
+    execution behavior and returns completed trades, but it does not write order
+    logs or end-of-day reports under ``log/``.
     """
+    if data_source not in ("text", "parquet"):
+        raise ValueError(f"data_source must be 'text' or 'parquet', got {data_source!r}")
+
+    if data_source == "parquet" and _symbols_file_missing(files_dir, trade_date):
+        print(
+            f"[GUARD] Skipping {trade_date}: Symbols_{trade_date}.csv not found in {files_dir}"
+        )
+        return []
+
     t_start = time.time()
 
     # 1. Load config
@@ -361,13 +474,22 @@ def run_daily_replay(
 
     # 3. Load history (or use pre-built)
     if history is None:
-        t0 = time.time()
-        hw_otc = load_history_window("OTC", trade_date, data_dir, use_cache=use_cache)
-        print(f"[TIMING] getTickData OTC: {(time.time() - t0) * 1000:.0f} ms")
+        if data_source == "parquet":
+            t0 = time.time()
+            hw_otc = load_parquet_history_window("OTC", trade_date, data_dir)
+            print(f"[TIMING] getTickData OTC: {(time.time() - t0) * 1000:.0f} ms")
 
-        t0 = time.time()
-        hw_tse = load_history_window("TSE", trade_date, data_dir, use_cache=use_cache)
-        print(f"[TIMING] getTickData TSE: {(time.time() - t0) * 1000:.0f} ms")
+            t0 = time.time()
+            hw_tse = load_parquet_history_window("TSE", trade_date, data_dir)
+            print(f"[TIMING] getTickData TSE: {(time.time() - t0) * 1000:.0f} ms")
+        else:
+            t0 = time.time()
+            hw_otc = load_history_window("OTC", trade_date, data_dir, use_cache=use_cache)
+            print(f"[TIMING] getTickData OTC: {(time.time() - t0) * 1000:.0f} ms")
+
+            t0 = time.time()
+            hw_tse = load_history_window("TSE", trade_date, data_dir, use_cache=use_cache)
+            print(f"[TIMING] getTickData TSE: {(time.time() - t0) * 1000:.0f} ms")
 
         history = _merge_history_windows(hw_otc, hw_tse)
     else:
@@ -435,8 +557,58 @@ def run_daily_replay(
 
     market_gate = MarketGate(config.strategy, p0050_prev)
 
+    proxy_0050_iter: Iterator[MarketTick] | None = None
+    proxy_0050_next: MarketTick | None = None
+
+    # The parquet tick feed omits all 00* symbols (including 0050). Prefer a
+    # lightweight 0050-only proxy stream from legacy text data when available so
+    # gate and entry-change semantics match the text path; otherwise fall back to
+    # day-bar open synthesis to keep circuit-breaker logic active.
+    if data_source == "parquet" and p0050_prev > 0:
+        text_proxy_dir = _find_0050_proxy_text_dir(trade_date, data_dir)
+        if text_proxy_dir is not None:
+            proxy_0050_iter = iterate_market_file("TSE", trade_date, text_proxy_dir, {"0050"})
+            proxy_0050_next = next(proxy_0050_iter, None)
+            if proxy_0050_next is not None:
+                print(f"[GATE] 0050 proxy stream: {text_proxy_dir}/TSEQuote.{trade_date}")
+            else:
+                proxy_0050_iter = None
+
+        if proxy_0050_next is None:
+            day_bar_root = Path(data_dir).parent / "day-ohlcv-and-chip"
+            open_price = load_0050_open(trade_date, day_bar_root)
+            if open_price is None:
+                print(
+                    f"[GATE] WARNING: no 0050 proxy stream and no day-bar open for "
+                    f"{trade_date} under {day_bar_root}; market gate will be inert "
+                    f"under parquet path"
+                )
+            else:
+                open_int = to_int_price(open_price)
+                for raw_time in (90_000_000_000, 91_500_000_000):
+                    synth = MarketTick(
+                        symbol="0050",
+                        market="TSE",
+                        match_time_str=raw_time,
+                        match_time_us=(9 * 3600 + (15 if raw_time == 91_500_000_000 else 0) * 60)
+                        * 1_000_000,
+                        status_code=0,
+                        trade_code=1,
+                        match=QuotePair(price=open_int, qty=0),
+                    )
+                    market_gate.on_tick(synth)
+                print(
+                    f"[GATE] 0050 backfill: prev_close={p0050_prev / 10000:.2f} "
+                    f"open={open_price:.2f} open_chg%={market_gate.market_open_chg_pct:.3f} "
+                    f"market_disabled={market_gate.market_disabled}"
+                )
+
     # Setup log writer
-    log_writer = OrderLogWriter(log_dir, trade_date)
+    log_writer: _OrderLogWriterLike
+    if write_outputs:
+        log_writer = OrderLogWriter(log_dir, trade_date)
+    else:
+        log_writer = _NullOrderLogWriter()
 
     entry_idx = 0
 
@@ -449,14 +621,24 @@ def run_daily_replay(
 
     data_provider = provider
     if data_provider is None:
-        data_provider = FileReplayProvider(
-            otc_date=trade_date,
-            tse_date=trade_date,
-            data_dir=data_dir,
-            tick_filter=tick_filter,
-            prev_day_limit_up=prev_day_lu,
-            num_tracker=num_tracker,
-        )
+        if data_source == "parquet":
+            data_provider = ParquetReplayProvider(
+                otc_date=trade_date,
+                tse_date=trade_date,
+                root=data_dir,
+                tick_filter=tick_filter,
+                prev_day_limit_up=prev_day_lu,
+                num_tracker=num_tracker,
+            )
+        else:
+            data_provider = FileReplayProvider(
+                otc_date=trade_date,
+                tse_date=trade_date,
+                data_dir=data_dir,
+                tick_filter=tick_filter,
+                prev_day_limit_up=prev_day_lu,
+                num_tracker=num_tracker,
+            )
 
     def _emit_minute_callbacks(match_time_str: int) -> None:
         nonlocal last_minute
@@ -484,7 +666,50 @@ def run_daily_replay(
             )
             on_dashboard_snapshot(snapshot)
 
+    def _finalize_for_market_disable() -> list[TradeRecord]:
+        _finalize_open_positions(
+            config,
+            pos,
+            last_price,
+            entry_signal_type,
+            entry_idx_map,
+            completed_trades,
+            log_writer,
+            max(last_match_time_str, config.execution.exit_time_limit),
+            trade_date=trade_date,
+            hooks=hooks,
+        )
+        if write_outputs:
+            _generate_reports(
+                completed_trades,
+                log_dir,
+                market_gate.market_open_chg_pct,
+                funnel,
+                trade_date,
+                no_charts,
+                data_dir,
+                prev_day_lu,
+            )
+            log_writer.close()
+        return completed_trades
+
+    def _drain_0050_proxy(until_match_time_str: int) -> bool:
+        nonlocal proxy_0050_next
+        while proxy_0050_next is not None and proxy_0050_next.match_time_str <= until_match_time_str:
+            market_gate.on_tick(proxy_0050_next)
+            if market_gate.market_disabled:
+                return True
+            assert proxy_0050_iter is not None
+            proxy_0050_next = next(proxy_0050_iter, None)
+        return False
+
+    if market_gate.market_disabled:
+        return _finalize_for_market_disable()
+
     for tick in data_provider.iterate_ticks():
+        if proxy_0050_next is not None and _drain_0050_proxy(tick.match_time_str):
+            return _finalize_for_market_disable()
+
         tick_count += 1
         last_price[tick.symbol] = tick.match.price
         last_match_time_str = tick.match_time_str
@@ -493,24 +718,7 @@ def run_daily_replay(
         if tick.symbol == "0050" and tick.trade_code == 1 and tick.match.price > 0:
             market_gate.on_tick(tick)
             if market_gate.market_disabled:
-                _finalize_open_positions(
-                    config,
-                    pos,
-                    last_price,
-                    entry_signal_type,
-                    entry_idx_map,
-                    completed_trades,
-                    log_writer,
-                    max(last_match_time_str, config.execution.exit_time_limit),
-                    trade_date=trade_date,
-                    hooks=hooks,
-                )
-                _generate_reports(
-                    completed_trades, log_dir, market_gate.market_open_chg_pct,
-                    funnel, trade_date, no_charts, data_dir, prev_day_lu,
-                )
-                log_writer.close()
-                return completed_trades
+                return _finalize_for_market_disable()
 
         # Skip non-trade ticks and "00XX" symbols
         if tick.trade_code != 1 or (tick.symbol[0:2] == "00"):
@@ -566,6 +774,44 @@ def run_daily_replay(
 
             if hooks is not None and hooks.on_screening is not None:
                 hooks.on_screening(symbol, match_type, match_type != "None")
+            if hooks is not None and hooks.on_screening_detail is not None:
+                mi = strong_group.last_match_info.get(symbol)
+                ahead_symbol = ""
+                behind_symbol = ""
+                if mi is not None and mi.group_name:
+                    member_ranker = strong_group.group_member_vwap_rank.get(mi.group_name)
+                    if member_ranker is not None:
+                        ranked_symbols = [member_symbol for _, member_symbol in member_ranker.iter_ranked()]
+                        if symbol in ranked_symbols:
+                            rank_idx = ranked_symbols.index(symbol)
+                            if rank_idx > 0:
+                                ahead_symbol = ranked_symbols[rank_idx - 1]
+                            if rank_idx + 1 < len(ranked_symbols):
+                                behind_symbol = ranked_symbols[rank_idx + 1]
+
+                hooks.on_screening_detail(
+                    ScreeningDetail(
+                        symbol=symbol,
+                        match_time_str=tick.match_time_str,
+                        match_time_us=tick.match_time_us,
+                        vwap=idx.vwap,
+                        day_high=idx.day_high,
+                        day_low=idx.day_low,
+                        match_type=match_type,
+                        qualified=match_type != "None",
+                        strong_group=group,
+                        strong_single=single,
+                        group_name=mi.group_name if mi is not None else "",
+                        group_rank=mi.group_rank if mi is not None else 0,
+                        member_rank=mi.member_rank if mi is not None else 0,
+                        raw_member_rank=mi.raw_member_rank if mi is not None else 0,
+                        m1_symbol=mi.m1_symbol if mi is not None else "",
+                        vol_ratio=mi.vol_ratio if mi is not None else 0.0,
+                        month_trading_val=mi.month_trading_val if mi is not None else 0,
+                        ahead_symbol=ahead_symbol,
+                        behind_symbol=behind_symbol,
+                    )
+                )
 
             if match_type != "None":
                 funnel.group_qualified_ticks += 1
@@ -677,17 +923,18 @@ def run_daily_replay(
     )
 
     # 9. Generate reports
-    _generate_reports(
-        completed_trades,
-        log_dir,
-        market_gate.market_open_chg_pct,
-        funnel,
-        trade_date,
-        no_charts,
-        data_dir,
-        prev_day_lu,
-    )
-    log_writer.close()
+    if write_outputs:
+        _generate_reports(
+            completed_trades,
+            log_dir,
+            market_gate.market_open_chg_pct,
+            funnel,
+            trade_date,
+            no_charts,
+            data_dir,
+            prev_day_lu,
+        )
+        log_writer.close()
 
     print(f"[TIMING] TOTAL: {(time.time() - t_start) * 1000:.0f} ms")
     print(f"Total ticks processed: {tick_count}")

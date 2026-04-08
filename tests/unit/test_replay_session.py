@@ -137,6 +137,7 @@ def test_run_daily_replay_contract_restores_live_params() -> None:
     assert "provider" in params
     assert "hooks" in params
     assert "on_dashboard_snapshot" in params
+    assert "write_outputs" in params
 
 
 def test_run_daily_replay_uses_injected_provider_and_callbacks(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -256,10 +257,14 @@ def test_run_daily_replay_uses_injected_provider_and_callbacks(monkeypatch: pyte
     monkeypatch.setattr(rs, "evaluate_signal_a", lambda *args, **kwargs: next(signal_calls))
 
     events: list[str] = []
+    detail_events: list[str] = []
     snapshots: list[DashboardSnapshot] = []
     hooks = SessionHooks(
         on_tick=lambda tick, idx: events.append(f"tick:{tick.match_time_str}"),
         on_screening=lambda symbol, match_type, qualified: events.append(f"screen:{symbol}:{match_type}:{qualified}"),
+        on_screening_detail=lambda detail: detail_events.append(
+            f"detail:{detail.symbol}:{detail.match_type}:{detail.qualified}"
+        ),
         on_signal=lambda symbol, signal_type, triggered: events.append(
             f"signal:{symbol}:{signal_type}:{triggered}"
         ),
@@ -275,6 +280,7 @@ def test_run_daily_replay_uses_injected_provider_and_callbacks(monkeypatch: pyte
         hooks=hooks,
         on_dashboard_snapshot=snapshots.append,
         no_charts=True,
+        write_outputs=False,
     )
 
     assert len(trades) == 1
@@ -292,3 +298,7 @@ def test_run_daily_replay_uses_injected_provider_and_callbacks(monkeypatch: pyte
         "minute:93100000000",
     ]
     assert [snap.time_raw for snap in snapshots] == [93000000000, 93100000000]
+    assert detail_events == [
+        "detail:2330:None:False",
+        "detail:2330:None:False",
+    ]

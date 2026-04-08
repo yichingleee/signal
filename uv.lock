@@ -956,6 +956,7 @@ source = { editable = "." }
 dependencies = [
     { name = "matplotlib" },
     { name = "numpy" },
+    { name = "pyarrow" },
     { name = "pydantic" },
 ]
 
@@ -968,7 +969,6 @@ dev = [
 live = [
     { name = "fastapi" },
     { name = "pandas" },
-    { name = "pyarrow" },
     { name = "python-socketio" },
     { name = "redis" },
     { name = "uvicorn" },
@@ -981,7 +981,7 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pandas", marker = "extra == 'live'", specifier = ">=2.2" },
-    { name = "pyarrow", marker = "extra == 'live'", specifier = ">=15.0" },
+    { name = "pyarrow", specifier = ">=15.0" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "python-socketio", marker = "extra == 'live'", specifier = ">=5.11" },
