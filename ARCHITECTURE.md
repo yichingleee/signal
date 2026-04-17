@@ -22,6 +22,11 @@
 - `reporting`: persisted outputs
 - `state` and `records`: runtime state carriers and immutable records
 
+## Signal Direction Contract
+
+- Preferred/default operation: keep `Strategy.trade_mode=long` and enable `SignalAShort` for short-side setups in the same replay session.
+- Legacy compatibility: `Strategy.trade_mode=short` is still supported for historical short-only behavior and parity checks.
+
 ## Live Data Integration
 
 The engine supports three data source modes via the `MarketDataProvider` abstraction:

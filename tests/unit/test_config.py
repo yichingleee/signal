@@ -35,8 +35,11 @@ class TestNormalizeStrategyConfig:
         config = normalize_strategy_config({})
         assert config.strategy.trade_mode == "long"
         assert config.signal_a.enabled is False
+        assert config.signal_a_short.enabled is False
         assert config.signal_a.short_vwap_near_ratio == 0.993
         assert config.signal_a.short_pre_condition_vwap_ratio == 1.007
+        assert config.signal_a_short.vwap_near_ratio == 0.993
+        assert config.signal_a_short.pre_condition_vwap_ratio == 1.007
         assert config.signal_b.enabled is False
         assert config.execution.position_cash == 10_000_000.0
 
@@ -45,6 +48,12 @@ class TestNormalizeStrategyConfig:
         config = normalize_strategy_config(raw)
         assert config.signal_a.enabled is True
         assert config.signal_a.vwap_near_ratio == 1.008
+
+    def test_signal_a_short_enabled(self):
+        raw = {"SignalAShort": {"enabled": "true", "vwap_near_ratio": "0.991"}}
+        config = normalize_strategy_config(raw)
+        assert config.signal_a_short.enabled is True
+        assert config.signal_a_short.vwap_near_ratio == 0.991
 
     def test_execution_config(self):
         raw = {"Order": {"position_cash": "5000000", "stop_loss_ratio_a": "0.995"}}

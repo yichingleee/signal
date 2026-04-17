@@ -6,6 +6,7 @@ This document describes the behavior implemented by the current Python code and 
 
 - `Strategy.trade_mode`: `long` (default; supports `long|short`)
 - `SignalA`: enabled
+- `SignalAShort`: enabled
 - `SignalB`: disabled
 - `StrongGroup`: enabled
 - `StrongSignal` / strong-single: disabled
@@ -13,14 +14,14 @@ This document describes the behavior implemented by the current Python code and 
 With the committed config, the live replay path is effectively:
 
 - strong-group screening
-- Signal A entries
+- Signal A (long) and Signal A Short (short) entries
 - stop-loss, time exit, two staged take-profit sells, then bailout
 
 ## Strategy Side Mode
 
 - The strategy side is selected by `Strategy.trade_mode`.
-- `long` keeps the original behavior.
-- `short` enables weakest-group/member screening, mirrored Signal A, and short execution pricing.
+- Preferred/default mode is `long`, with short-side entries coming from `SignalAShort.enabled=true`.
+- `short` is a legacy compatibility mode that remains supported for historical short-only behavior.
 - Position quantity is signed:
   - long: `qty > 0`
   - short: `qty < 0`
@@ -80,7 +81,7 @@ Other important current behavior:
 
 - `single_group_rank_filter` still defaults to enabled in code
 - if strong-single is re-enabled later, its monthly-value candidates are included in the replay universe before group-rank filtering is applied
-- in `trade_mode=short`, strong-single does not participate in entry decisions
+- in legacy `trade_mode=short`, strong-single does not participate in entry decisions
 
 ## Signal A
 
@@ -103,11 +104,33 @@ Current implementation behavior:
 
 The last point matters: the current `SignalAState` is single-fire per symbol per day. A timed-out candidate does not re-arm later in the session.
 
+## Signal A Short
+
+Current committed parameters:
+
+- enabled: `true`
+- near-VWAP ratio: `0.993`
+- bounce ratio: `0.008`
+- entry window: `09:04:00` to `09:25:00`
+- pre-condition ceiling starts at `09:04:00`
+- pre-condition VWAP ratio: `1.007`
+- maximum downside extension versus previous close: `8.5%`
+- near-to-entry timeout: `300` seconds
+
+Current implementation behavior:
+
+1. While short-side screening match type is non-`None`, watch for `price / vwap >= 0.993`.
+2. Record the highest price after that near-VWAP moment.
+3. Trigger once price rejects `0.8%` from that local high.
+4. If the timeout expires, mark the symbol as triggered for the day without entering.
+
+Like Signal A, Signal A Short is single-fire per symbol per day.
+
 ## Signal B
 
 Signal B is implemented but disabled in the committed config. The code still maintains its track-zone, buffer-zone, and trade-zone state machine when enabled.
 
-If Signal A and Signal B both trigger on the same tick, the runtime enters as `SignalA`.
+Signal selection priority is deterministic: `SignalA` > `SignalAShort` > `SignalB`.
 
 ## Entry Filters
 
@@ -119,7 +142,9 @@ An entry is blocked when any of the following apply:
 - `0050` change filters trip
 - `disposition_stocks_enabled=true` and the symbol is in its first three trades of the day
 - the symbol is already held
-- the ask or match price is above `500`
+- side-aware entry quote is above `500`:
+  - long entry: ask (fallback match)
+  - short entry: bid (fallback match)
 
 Important current nuance:
 
@@ -153,7 +178,7 @@ Execution quote side is side-aware:
 
 - Signal A stop: `price <= entry_vwap * 0.995`
 - Signal B stop: `price <= entry_rolling_low * 0.993`
-- short mode uses mirrored stop comparisons and buy-to-cover quote side
+- short-side positions use mirrored stop comparisons and buy-to-cover quote side
 
 ### Time exit
 
@@ -174,7 +199,7 @@ Current implementation meaning:
 - the position is split into `5` equal slices
 - two slices are staged as limit sells at `+3%` over the entry price
 - three slices are reserved for limit-up or end-of-day handling
-- in short mode, take-profit triggers on `price <= target` (cover path) and reserve limit-up handling is not used
+- for short-side positions, take-profit triggers on `price <= target` (cover path) and reserve limit-up handling is not used
 
 This is not the old five-step linear grid described in historical notes.
 
@@ -182,7 +207,7 @@ This is not the old five-step linear grid described in historical notes.
 
 - bailout activates only after at least one take-profit fill
 - current threshold: `price <= day_high_at_entry * 0.8`
-- short mode mirrors bailout to a rebound-off-day-low condition with buy-to-cover execution
+- short-side positions mirror bailout to a rebound-off-day-low condition with buy-to-cover execution
 
 This is much looser than the earlier stop-loss notes and is effectively a deep post-profit fallback.
 

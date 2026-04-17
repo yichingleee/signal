@@ -9,6 +9,7 @@ from tw_signal_engine.config.strategy_config import (
     LiveConfig,
     NormalizedStrategyConfig,
     SignalAConfig,
+    SignalAShortConfig,
     SignalBConfig,
     StrategyGlobalConfig,
     StrongGroupConfig,
@@ -64,6 +65,32 @@ def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrat
         short_pre_condition_vwap_ratio=float(_get(sa_raw, "short_pre_condition_vwap_ratio", "1.007")),
         trade_zone_max_increase_ratio=float(_get(sa_raw, "trade_zone_max_increase_ratio", "0.085")),
         max_near_to_entry_us=int(float(_get(sa_raw, "max_near_to_entry_sec", "0")) * 1_000_000),
+    )
+
+    # SignalAShort (new independent short signal)
+    sas_raw = raw.get("SignalAShort", {})
+    signal_a_short = SignalAShortConfig(
+        enabled=_bool(_get(sas_raw, "enabled", "false")),
+        vwap_near_ratio=float(_get(sas_raw, "vwap_near_ratio", _get(sa_raw, "short_vwap_near_ratio", "0.993"))),
+        bounce_ratio=float(_get(sas_raw, "bounce_ratio", _get(sa_raw, "bounce_ratio", "0.006"))),
+        entry_start_time=int(_get(sas_raw, "entry_start_time", _get(sa_raw, "entry_start_time", "92000000000"))),
+        entry_end_time=int(_get(sas_raw, "entry_end_time", _get(sa_raw, "entry_end_time", "110000000000"))),
+        pre_condition_start_time=int(
+            _get(sas_raw, "pre_condition_start_time", _get(sa_raw, "pre_condition_start_time", "91500000000"))
+        ),
+        pre_condition_vwap_ratio=float(
+            _get(
+                sas_raw,
+                "pre_condition_vwap_ratio",
+                _get(sa_raw, "short_pre_condition_vwap_ratio", "1.007"),
+            )
+        ),
+        trade_zone_max_increase_ratio=float(
+            _get(sas_raw, "trade_zone_max_increase_ratio", _get(sa_raw, "trade_zone_max_increase_ratio", "0.085"))
+        ),
+        max_near_to_entry_us=int(
+            float(_get(sas_raw, "max_near_to_entry_sec", _get(sa_raw, "max_near_to_entry_sec", "0"))) * 1_000_000
+        ),
     )
 
     # SignalB
@@ -185,6 +212,7 @@ def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrat
     return NormalizedStrategyConfig(
         strategy=strategy,
         signal_a=signal_a,
+        signal_a_short=signal_a_short,
         signal_b=signal_b,
         strong_group=strong_group,
         strong_single=strong_single,

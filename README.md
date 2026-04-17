@@ -41,6 +41,12 @@ For live/server workflows, install live runtime dependencies:
 uv sync --extra live
 ```
 
+## Signal Direction Modes
+
+- Default strategy mode is `Strategy.trade_mode=long`.
+- The default short-side signal path is `SignalAShort.enabled=true` (runs alongside `SignalA`/`SignalB` during the same replay).
+- `Strategy.trade_mode=short` is a legacy compatibility mode that remains supported. Use it only when you need historical short-only behavior from older runs.
+
 ## Repository Guide
 
 - Repo map for agents and contributors: [AGENTS.md](AGENTS.md)

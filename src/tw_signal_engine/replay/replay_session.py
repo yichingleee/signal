@@ -8,7 +8,7 @@ from datetime import datetime
 
 from tw_signal_engine.config.load_legacy_ini import load_legacy_ini
 from tw_signal_engine.config.normalize_strategy_config import normalize_strategy_config
-from tw_signal_engine.config.strategy_config import NormalizedStrategyConfig
+from tw_signal_engine.config.strategy_config import NormalizedStrategyConfig, SignalAShortConfig, TradeMode
 from tw_signal_engine.execution.create_entry_trade import execute_entry, should_enter
 from tw_signal_engine.execution.trade_ledger import on_tick_exit
 from tw_signal_engine.market_data.file_replay_provider import FileReplayProvider
@@ -40,6 +40,7 @@ from tw_signal_engine.server.dashboard_snapshot import (
     VWAPMonitorEntry,
 )
 from tw_signal_engine.signals.evaluate_signal_a import evaluate_signal_a
+from tw_signal_engine.signals.evaluate_signal_a_short import evaluate_signal_a_short
 from tw_signal_engine.signals.evaluate_signal_b import evaluate_signal_b
 from tw_signal_engine.state.position_state import PositionState
 from tw_signal_engine.state.signal_state import SignalAState, SignalBState
@@ -171,6 +172,21 @@ def _build_primary_group_map(symbol_to_groups: dict[str, list[str]]) -> dict[str
     return primary_map
 
 
+def _legacy_signal_a_short_config(config: NormalizedStrategyConfig) -> SignalAShortConfig:
+    """Map legacy short-mode SignalA knobs to SignalAShortConfig."""
+    return SignalAShortConfig(
+        enabled=config.signal_a.enabled,
+        vwap_near_ratio=config.signal_a.short_vwap_near_ratio,
+        bounce_ratio=config.signal_a.bounce_ratio,
+        entry_start_time=config.signal_a.entry_start_time,
+        entry_end_time=config.signal_a.entry_end_time,
+        pre_condition_start_time=config.signal_a.pre_condition_start_time,
+        pre_condition_vwap_ratio=config.signal_a.short_pre_condition_vwap_ratio,
+        trade_zone_max_increase_ratio=config.signal_a.trade_zone_max_increase_ratio,
+        max_near_to_entry_us=config.signal_a.max_near_to_entry_us,
+    )
+
+
 def _build_dashboard_snapshot(
     match_time_str: int,
     tick_count: int,
@@ -181,6 +197,7 @@ def _build_dashboard_snapshot(
     latest_idx_map: dict[str, IndexData],
     last_price: dict[str, int],
     signal_a_map: dict[str, SignalAState],
+    signal_a_short_map: dict[str, SignalAState],
     pos: PositionState,
     completed_trades: list[TradeRecord],
     trade_mode: str,
@@ -196,6 +213,7 @@ def _build_dashboard_snapshot(
         match_info = strong_group.last_match_info.get(symbol)
         group_name = match_info.group_name if match_info is not None else symbol_to_group.get(symbol, "")
         state = signal_a_map.get(symbol)
+        short_state = signal_a_short_map.get(symbol)
         signal_state = "idle"
         if state is not None:
             if state.triggered:
@@ -204,6 +222,13 @@ def _build_dashboard_snapshot(
                 signal_state = "near_vwap"
             elif state.forbidden:
                 signal_state = "forbidden"
+        elif short_state is not None:
+            if short_state.triggered:
+                signal_state = "triggered_short"
+            elif short_state.near_vwap:
+                signal_state = "near_vwap_short"
+            elif short_state.forbidden:
+                signal_state = "forbidden_short"
         status = "holding" if abs(pos.stocks.get(symbol, 0)) > 0.001 else ""
         vwap = idx.vwap
         vwap_rows.append(
@@ -250,10 +275,39 @@ def _build_dashboard_snapshot(
                 side=trade_mode,
             )
         )
+    for symbol, state in signal_a_short_map.items():
+        if not state.near_vwap or state.triggered or abs(pos.stocks.get(symbol, 0)) > 0.001:
+            continue
+        idx_for_symbol = latest_idx_map.get(symbol)
+        if idx_for_symbol is None:
+            continue
+        ref = f1_map.get(symbol)
+        name = getattr(ref, "name", symbol)
+        group_name = symbol_to_group.get(symbol, "")
+        price_raw = last_price.get(symbol, 0)
+        preparing.append(
+            PreparingEntry(
+                symbol=symbol,
+                name=name,
+                group_name=group_name,
+                group_tag=group_name,
+                order_price=price_raw / 10000,
+                current_price=price_raw / 10000,
+                distance_pct=(
+                    (price_raw - idx_for_symbol.vwap) / idx_for_symbol.vwap
+                    if idx_for_symbol.vwap > 0
+                    else 0.0
+                ),
+                vwap=idx_for_symbol.vwap / 10000,
+                day_low=idx_for_symbol.day_low / 10000 if idx_for_symbol.day_low > 0 else 0.0,
+                near_vwap_pv_ratio=state.near_vwap_pv_ratio,
+                side="short",
+            )
+        )
 
     entered: list[ActivePosition] = []
     for symbol, entry in pos.open_trades.items():
-        if entry.signal_type != "SignalA":
+        if entry.signal_type not in {"SignalA", "SignalAShort"}:
             continue
         price_raw = last_price.get(symbol, 0)
         if entry.entry_price > 0:
@@ -283,7 +337,7 @@ def _build_dashboard_snapshot(
 
     exited: list[CompletedTrade] = []
     for trade in completed_trades[-200:]:
-        if trade.signal_type != "SignalA":
+        if trade.signal_type not in {"SignalA", "SignalAShort"}:
             continue
         ref = f1_map.get(trade.symbol)
         name = getattr(ref, "name", trade.symbol)
@@ -305,11 +359,14 @@ def _build_dashboard_snapshot(
 
     take_profit = sum(1 for trade in completed_trades if trade.final_leave_cause == "takeProfit")
     stop_loss = sum(1 for trade in completed_trades if trade.final_leave_cause == "stopLoss")
-    forbidden = sum(1 for state in signal_a_map.values() if state.forbidden)
+    forbidden = sum(1 for state in signal_a_map.values() if state.forbidden) + sum(
+        1 for state in signal_a_short_map.values() if state.forbidden
+    )
     counters = SignalCounters(
-        qualified=sum(1 for state in signal_a_map.values() if state.near_vwap or state.triggered),
+        qualified=sum(1 for state in signal_a_map.values() if state.near_vwap or state.triggered)
+        + sum(1 for state in signal_a_short_map.values() if state.near_vwap or state.triggered),
         not_qualified=0,
-        holding=sum(1 for entry in pos.open_trades.values() if entry.signal_type == "SignalA"),
+        holding=sum(1 for entry in pos.open_trades.values() if entry.signal_type in {"SignalA", "SignalAShort"}),
         take_profit=take_profit,
         stop_loss=stop_loss,
         forbidden=forbidden,
@@ -365,7 +422,13 @@ def run_daily_replay(
         config.execution.tax_rate = cost_params["tax"]
     if "slippage" in cost_params:
         config.execution.slippage_bps = cost_params["slippage"]
+    compatibility_short_mode = config.strategy.trade_mode == "short"
+    legacy_short_signal_a_enabled = compatibility_short_mode and config.signal_a.enabled
+    signal_a_short_enabled = config.signal_a_short.enabled and not compatibility_short_mode
+    legacy_short_signal_a_config = _legacy_signal_a_short_config(config)
+
     print(f"signalA_enabled: [{config.signal_a.enabled}]")
+    print(f"signalAShort_enabled: [{config.signal_a_short.enabled}]")
     print(f"signalB_enabled: [{config.signal_b.enabled}]")
     print(f"strongGroup_enabled: [{config.strong_group.enabled}]")
     print(f"strongSingle_enabled: [{config.strong_single.enabled}]")
@@ -408,18 +471,37 @@ def run_daily_replay(
     strong_group.initialize_validity()
     print(f"[TIMING] getGroup: {(time.time() - t0) * 1000:.0f} ms")
 
+    strong_group_short: StrongGroupEvaluator | None = None
+    if signal_a_short_enabled and config.strong_group.enabled:
+        strong_group_short = StrongGroupEvaluator(
+            config=config.strong_group,
+            symbol_to_groups=symbol_to_groups,
+            group_members=group_members,
+            vol_cum=vol_cum,
+            trading_val=trading_val,
+            f1_map=f1_map,
+            prev_day_limit_up=prev_day_lu,
+            trade_mode="short",
+        )
+        t0 = time.time()
+        strong_group_short.initialize_validity()
+        print(f"[TIMING] getGroupShort: {(time.time() - t0) * 1000:.0f} ms")
+
     strong_single = StrongSingleEvaluator(
         config=config.strong_single,
         vol_cum=vol_cum,
         trading_val=trading_val,
         f1_map=f1_map,
     )
-    strong_single_enabled_for_entry = config.strong_single.enabled and config.strategy.trade_mode == "long"
+    strong_single_enabled_for_entry = config.strong_single.enabled and not compatibility_short_mode
     strong_single_valid_symbols = strong_single.initialize_validity() if strong_single_enabled_for_entry else set()
 
     # 5. Build replay universe
+    valid_group_symbols = set(strong_group.symbol_is_valid.keys())
+    if strong_group_short is not None:
+        valid_group_symbols |= set(strong_group_short.symbol_is_valid.keys())
     tick_filter = build_replay_universe(
-        set(strong_group.symbol_is_valid.keys()),
+        valid_group_symbols,
         single_valid_symbols=strong_single_valid_symbols,
     )
     print(f"tickFilter: {len(tick_filter)} symbols")
@@ -433,11 +515,12 @@ def run_daily_replay(
     index_calc_map: dict[str, IndexCalc] = {}
     latest_idx_map: dict[str, IndexData] = {}
     signal_a_map: dict[str, SignalAState] = {}
+    signal_a_short_map: dict[str, SignalAState] = {}
     signal_b_map: dict[str, SignalBState] = {}
     last_price: dict[str, int] = {}
     funnel = FunnelTracker()
     funnel.universe_count = len(tick_filter)
-    funnel.valid_group_symbols = len(strong_group.symbol_is_valid)
+    funnel.valid_group_symbols = len(valid_group_symbols)
 
     # Determine if Friday
     is_friday = False
@@ -498,6 +581,7 @@ def run_daily_replay(
                 latest_idx_map=latest_idx_map,
                 last_price=last_price,
                 signal_a_map=signal_a_map,
+                signal_a_short_map=signal_a_short_map,
                 pos=pos,
                 completed_trades=completed_trades,
                 trade_mode=config.strategy.trade_mode,
@@ -579,39 +663,73 @@ def run_daily_replay(
             if config.strong_group.enabled:
                 group = strong_group.on_tick(idx, symbol, tick.match.price, tick.match.qty,
                                              tick.match_time_us, tick.match_time_str, tick.is_limit_up_locked)
+            short_group = False
+            if strong_group_short is not None:
+                short_group = strong_group_short.on_tick(
+                    idx, symbol, tick.match.price, tick.match.qty,
+                    tick.match_time_us, tick.match_time_str, tick.is_limit_up_locked
+                )
 
-            match_type = "None"
-            if config.strategy.trade_mode == "short":
+            long_match_type = "None"
+            short_match_type = "None"
+            if compatibility_short_mode:
                 if group:
-                    match_type = "StrongGroup"
+                    short_match_type = "StrongGroup"
             else:
                 if single and group:
-                    match_type = "Both"
+                    long_match_type = "Both"
                 elif single:
-                    match_type = "StrongSingle"
+                    long_match_type = "StrongSingle"
                 elif group:
-                    match_type = "StrongGroup"
+                    long_match_type = "StrongGroup"
+                if short_group:
+                    short_match_type = "StrongGroup"
+
+            match_type_for_screening = short_match_type if compatibility_short_mode else long_match_type
 
             if hooks is not None and hooks.on_screening is not None:
-                hooks.on_screening(symbol, match_type, match_type != "None")
+                hooks.on_screening(symbol, match_type_for_screening, match_type_for_screening != "None")
 
-            if match_type != "None":
+            if long_match_type != "None" or short_match_type != "None":
                 funnel.group_qualified_ticks += 1
 
             # Signal A (skip if disabled)
             f1 = f1_map.get(symbol)
             is_signal_a = False
             trigger_mt_a = "None"
-            if config.signal_a.enabled:
+            if not compatibility_short_mode and config.signal_a.enabled:
                 if symbol not in signal_a_map:
                     signal_a_map[symbol] = SignalAState(symbol=symbol)
                 is_signal_a, trigger_mt_a = evaluate_signal_a(
-                    signal_a_map[symbol], config.signal_a, config.strategy.trade_mode, idx,
+                    signal_a_map[symbol], config.signal_a, idx,
                     tick.match.price, tick.match_time_str, tick.match_time_us,
-                    match_type, f1,
+                    long_match_type, f1,
                 )
                 if hooks is not None and hooks.on_signal is not None:
                     hooks.on_signal(symbol, "SignalA", is_signal_a)
+            elif legacy_short_signal_a_enabled:
+                if symbol not in signal_a_map:
+                    signal_a_map[symbol] = SignalAState(symbol=symbol)
+                is_signal_a, trigger_mt_a = evaluate_signal_a_short(
+                    signal_a_map[symbol], legacy_short_signal_a_config, idx,
+                    tick.match.price, tick.match_time_str, tick.match_time_us,
+                    short_match_type, f1,
+                )
+                if hooks is not None and hooks.on_signal is not None:
+                    hooks.on_signal(symbol, "SignalA", is_signal_a)
+
+            is_signal_a_short = False
+            trigger_mt_a_short = "None"
+            if signal_a_short_enabled:
+                if symbol not in signal_a_short_map:
+                    signal_a_short_map[symbol] = SignalAState(symbol=symbol)
+                is_signal_a_short, trigger_mt_a_short = evaluate_signal_a_short(
+                    signal_a_short_map[symbol], config.signal_a_short, idx,
+                    tick.match.price, tick.match_time_str, tick.match_time_us,
+                    short_match_type, f1,
+                )
+                if hooks is not None and hooks.on_signal is not None:
+                    hooks.on_signal(symbol, "SignalAShort", is_signal_a_short)
 
             # Signal B (skip if disabled - no state allocation)
             is_signal_b = False
@@ -627,41 +745,74 @@ def run_daily_replay(
                     signal_b_map[symbol], config.signal_b, idx,
                     symbol, tick.match.price, tick.match.qty,
                     tick.match_time_str, tick.match_time_us, tick.trade_at,
-                    match_type, f1,
+                    short_match_type if compatibility_short_mode else long_match_type, f1,
                     symbol in pos.stopped_loss_symbols,
                 )
                 if hooks is not None and hooks.on_signal is not None:
                     hooks.on_signal(symbol, "SignalB", is_signal_b)
 
             # Trigger entry
-            if is_signal_a or is_signal_b:
+            selected_signal_type: str | None = None
+            selected_match_type = "None"
+            selected_trade_mode: TradeMode = "long"
+            selected_group_eval = strong_group
+
+            # Deterministic priority: SignalA > SignalAShort > SignalB.
+            if is_signal_a:
+                selected_signal_type = "SignalA"
+                selected_match_type = trigger_mt_a
+                selected_trade_mode = "short" if compatibility_short_mode else "long"
+            elif is_signal_a_short:
+                selected_signal_type = "SignalAShort"
+                selected_match_type = trigger_mt_a_short
+                selected_trade_mode = "short"
+                if strong_group_short is not None:
+                    selected_group_eval = strong_group_short
+            elif is_signal_b:
+                selected_signal_type = "SignalB"
+                selected_match_type = trigger_mt_b
+                selected_trade_mode = "short" if compatibility_short_mode else "long"
+                if selected_trade_mode == "short" and strong_group_short is not None:
+                    selected_group_eval = strong_group_short
+
+            if selected_signal_type is not None:
                 funnel.signal_triggered += 1
-                if is_signal_a and is_signal_b:
-                    sig_type = "SignalA"
-                    tmt = trigger_mt_a
-                elif is_signal_a:
-                    sig_type = "SignalA"
-                    tmt = trigger_mt_a
-                else:
-                    sig_type = "SignalB"
-                    tmt = trigger_mt_b
 
                 allowed, block_reason = should_enter(
-                    config.execution, config.strategy.trade_mode, tick, tmt, sig_type, pos, is_friday,
+                    config.execution,
+                    selected_trade_mode,
+                    tick,
+                    selected_match_type,
+                    selected_signal_type,
+                    pos,
+                    is_friday,
                     p0050_prev, market_gate.p0050_latest, market_gate.market_open_chg_pct,
                     strong_single.forbidden if strong_single_enabled_for_entry else None,
                 )
                 if allowed:
-                    execute_entry(config.execution, config.strategy.trade_mode, tick, idx, tmt, sig_type, pos, f1_map,
-                                  strong_group, p0050_prev, market_gate.p0050_latest,
-                                  market_gate.market_open_chg_pct)
+                    execute_entry(
+                        config.execution,
+                        selected_trade_mode,
+                        tick,
+                        idx,
+                        selected_match_type,
+                        selected_signal_type,
+                        pos,
+                        f1_map,
+                        selected_group_eval,
+                        p0050_prev,
+                        market_gate.p0050_latest,
+                        market_gate.market_open_chg_pct,
+                    )
                     # Initialize MAE/MFE tracking at entry price
-                    entry_price_int = int(pos.open_trades[symbol].entry_price * 10000 + 0.5)
-                    pos.trade_low[symbol] = entry_price_int
-                    pos.trade_high[symbol] = entry_price_int
+                    entry_trade = pos.open_trades.get(symbol)
+                    if entry_trade is not None:
+                        entry_price_int = int(entry_trade.entry_price * 10000 + 0.5)
+                        pos.trade_low[symbol] = entry_price_int
+                        pos.trade_high[symbol] = entry_price_int
 
                     entry_idx_map[symbol] = idx
-                    entry_signal_type[symbol] = sig_type
+                    entry_signal_type[symbol] = selected_signal_type
                     entry_idx += 1
                     funnel.executed_trades += 1
 
@@ -671,7 +822,7 @@ def run_daily_replay(
                             hooks.on_entry(symbol, entry_trade)
 
                     # Write log
-                    mi = strong_group.last_match_info.get(symbol)
+                    mi = selected_group_eval.last_match_info.get(symbol)
                     group_info = "-"
                     if mi and mi.group_name:
                         group_info = f"{mi.group_name}(G{mi.group_rank}/M{mi.member_rank}/R{mi.raw_member_rank})"
@@ -679,8 +830,12 @@ def run_daily_replay(
                             group_info += f" M1={mi.m1_symbol}"
                     log_writer.write_entry(
                         symbol, tick.match_time_str, tick.match.price,
-                        pos.cash, pos.symbol_cash.get(symbol, 0), sig_type, tmt,
-                        pos.open_trades[symbol].side,
+                        pos.cash, pos.symbol_cash.get(symbol, 0), selected_signal_type, selected_match_type,
+                        (
+                            pos.open_trades[symbol].side
+                            if symbol in pos.open_trades
+                            else ("short" if selected_trade_mode == "short" else "long")
+                        ),
                         pos.stocks.get(symbol, 0), group_info,
                     )
                 else:

@@ -50,6 +50,10 @@ uv run python -m tw_signal_engine.cli.run_batch_replay \
 - legacy INI format
 - parsed case-sensitively
 - normalized into typed config models before runtime use
+- preferred/default short-side usage:
+  - keep `Strategy.trade_mode=long`
+  - set `SignalAShort.enabled=true` to run short Signal A concurrently
+- `Strategy.trade_mode=short` is a legacy compatibility mode and remains supported for historical short-only behavior
 
 ### `Symbols_YYYYMMDD.csv`
 

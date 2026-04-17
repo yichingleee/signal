@@ -297,3 +297,131 @@ def test_run_daily_replay_uses_injected_provider_and_callbacks(monkeypatch: pyte
         "minute:93100000000",
     ]
     assert [snap.time_raw for snap in snapshots] == [93000000000, 93100000000]
+
+
+def test_signal_a_short_runs_independently_with_short_side(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tw_signal_engine.replay import replay_session as rs
+
+    class _Provider:
+        def iterate_ticks(self):
+            yield _make_tick("2330", 93000000000, 5_000_000)
+
+    class _LogWriter:
+        def __init__(self, log_dir: str, date: str) -> None:
+            self.log_dir = log_dir
+            self.date = date
+
+        def write_entry(self, *args, **kwargs) -> None:
+            return None
+
+        def write_leave(self, *args, **kwargs) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    entries: list[tuple[str, str]] = []
+    signal_events: list[tuple[str, str, bool]] = []
+
+    def _execute_entry(*args, **kwargs) -> None:
+        trade_mode = args[1]
+        signal_type = args[5]
+        entries.append((trade_mode, signal_type))
+
+    monkeypatch.setattr(rs, "load_legacy_ini", lambda _: {})
+    cfg = NormalizedStrategyConfig()
+    cfg.signal_a.enabled = True
+    cfg.signal_a_short.enabled = True
+    cfg.signal_b.enabled = False
+    cfg.strong_group.enabled = True
+    monkeypatch.setattr(rs, "normalize_strategy_config", lambda _: cfg)
+    monkeypatch.setattr(rs, "load_symbol_reference", lambda *_: {"2330": _ref("2330"), "0050": _ref("0050")})
+    monkeypatch.setattr(rs, "derive_prev_day_limit_up", lambda *_: {})
+    monkeypatch.setattr(rs, "load_group_membership", lambda *_: ([], {}, {}))
+    monkeypatch.setattr(rs, "OrderLogWriter", _LogWriter)
+    monkeypatch.setattr(rs, "_generate_reports", lambda *args, **kwargs: None)
+    monkeypatch.setattr(rs, "evaluate_signal_a", lambda *args, **kwargs: (False, "None"))
+    monkeypatch.setattr(rs, "evaluate_signal_a_short", lambda *args, **kwargs: (True, "StrongGroup"))
+    monkeypatch.setattr(rs, "should_enter", lambda *args, **kwargs: (True, ""))
+    monkeypatch.setattr(rs, "execute_entry", _execute_entry)
+
+    hooks = SessionHooks(
+        on_signal=lambda symbol, signal_type, triggered: signal_events.append((symbol, signal_type, triggered))
+    )
+
+    trades = run_daily_replay(
+        trade_date="20260129",
+        history=HistoryWindow(vol_cum=[], trading_val=[], source_dates=[]),
+        provider=_Provider(),
+        hooks=hooks,
+        no_charts=True,
+    )
+
+    assert trades == []
+    assert entries == [("short", "SignalAShort")]
+    assert ("2330", "SignalAShort", True) in signal_events
+
+
+def test_trade_mode_short_keeps_legacy_signal_a_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tw_signal_engine.replay import replay_session as rs
+
+    class _Provider:
+        def iterate_ticks(self):
+            yield _make_tick("2330", 93000000000, 5_000_000)
+
+    class _LogWriter:
+        def __init__(self, log_dir: str, date: str) -> None:
+            self.log_dir = log_dir
+            self.date = date
+
+        def write_entry(self, *args, **kwargs) -> None:
+            return None
+
+        def write_leave(self, *args, **kwargs) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    entries: list[tuple[str, str]] = []
+    signal_events: list[tuple[str, str, bool]] = []
+
+    def _execute_entry(*args, **kwargs) -> None:
+        trade_mode = args[1]
+        signal_type = args[5]
+        entries.append((trade_mode, signal_type))
+
+    def _should_not_call_evaluate_signal_a(*args, **kwargs):
+        raise AssertionError("evaluate_signal_a should not be called in trade_mode=short compatibility mode")
+
+    monkeypatch.setattr(rs, "load_legacy_ini", lambda _: {})
+    cfg = NormalizedStrategyConfig()
+    cfg.strategy.trade_mode = "short"
+    cfg.signal_a.enabled = True
+    cfg.signal_a_short.enabled = True
+    monkeypatch.setattr(rs, "normalize_strategy_config", lambda _: cfg)
+    monkeypatch.setattr(rs, "load_symbol_reference", lambda *_: {"2330": _ref("2330"), "0050": _ref("0050")})
+    monkeypatch.setattr(rs, "derive_prev_day_limit_up", lambda *_: {})
+    monkeypatch.setattr(rs, "load_group_membership", lambda *_: ([], {}, {}))
+    monkeypatch.setattr(rs, "OrderLogWriter", _LogWriter)
+    monkeypatch.setattr(rs, "_generate_reports", lambda *args, **kwargs: None)
+    monkeypatch.setattr(rs, "evaluate_signal_a", _should_not_call_evaluate_signal_a)
+    monkeypatch.setattr(rs, "evaluate_signal_a_short", lambda *args, **kwargs: (True, "StrongGroup"))
+    monkeypatch.setattr(rs, "should_enter", lambda *args, **kwargs: (True, ""))
+    monkeypatch.setattr(rs, "execute_entry", _execute_entry)
+
+    hooks = SessionHooks(
+        on_signal=lambda symbol, signal_type, triggered: signal_events.append((symbol, signal_type, triggered))
+    )
+
+    trades = run_daily_replay(
+        trade_date="20260129",
+        history=HistoryWindow(vol_cum=[], trading_val=[], source_dates=[]),
+        provider=_Provider(),
+        hooks=hooks,
+        no_charts=True,
+    )
+
+    assert trades == []
+    assert entries == [("short", "SignalA")]
+    assert ("2330", "SignalA", True) in signal_events
