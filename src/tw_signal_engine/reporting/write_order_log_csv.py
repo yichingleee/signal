@@ -9,7 +9,7 @@ from typing import Any
 
 LOG_HEADER = [
     "Action", "Symbol", "Time", "Price", "Cash", "SymbolCash",
-    "SignalType", "EnterCause", "LeaveCause", "RemainingQty", "GroupInfo",
+    "SignalType", "EnterCause", "LeaveCause", "Side", "RemainingQty", "GroupInfo",
 ]
 
 
@@ -50,13 +50,14 @@ class OrderLogWriter:
         symbol_cash: float,
         signal_type: str,
         cause: str,
+        side: str,
         remaining_qty: float,
         group_info: str,
     ) -> None:
         row = [
             "enter", symbol, str(time_str), str(price),
             f"{cash:.0f}", f"{symbol_cash:.0f}",
-            signal_type, cause, "-", f"{remaining_qty:.0f}", group_info,
+            signal_type, cause, "-", side, f"{remaining_qty:.0f}", group_info,
         ]
         self._main_w.writerow(row)
         sw = self._get_symbol_writer(symbol)
@@ -70,12 +71,13 @@ class OrderLogWriter:
         cash: float,
         symbol_cash: float,
         cause: str,
+        side: str,
         remaining_qty: float,
     ) -> None:
         row = [
             "leave", symbol, str(time_str), str(price),
             f"{cash:.0f}", f"{symbol_cash:.0f}",
-            "-", "-", cause, f"{remaining_qty:.0f}", "",
+            "-", "-", cause, side, f"{remaining_qty:.0f}", "",
         ]
         self._main_w.writerow(row)
         sw = self._get_symbol_writer(symbol)

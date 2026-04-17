@@ -107,6 +107,7 @@ class TestEnhancedTradeReport:
         with open(path) as f:
             rows = list(csv.reader(f))
         header = rows[0]
+        assert "Side" in header
         assert "MAE%" in header
         assert "MFE%" in header
         assert "GrossPnL" in header

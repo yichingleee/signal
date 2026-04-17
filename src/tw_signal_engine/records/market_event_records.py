@@ -39,6 +39,7 @@ class TradeRecord:
     """Completed trade for report generation."""
 
     symbol: str = ""
+    side: str = "long"
     signal_type: str = ""  # "SignalA", "SignalB", "SignalBoth"
     enter_cause: str = ""  # "StrongGroup", "StrongSingle", "Both"
     final_leave_cause: str = ""

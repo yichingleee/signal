@@ -2,23 +2,44 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel
+
+TradeMode = Literal["long", "short"]
 
 
 class SignalAConfig(BaseModel):
     enabled: bool = False
     vwap_near_ratio: float = 1.005
+    # Legacy short-mode knobs kept for backwards compatibility (trade_mode=short).
+    short_vwap_near_ratio: float = 0.993
     bounce_ratio: float = 0.006
     entry_start_time: int = 92000000000
     entry_end_time: int = 110000000000
     pre_condition_start_time: int = 91500000000
     pre_condition_vwap_ratio: float = 0.993
+    short_pre_condition_vwap_ratio: float = 1.007
+    trade_zone_max_increase_ratio: float = 0.085
+    max_near_to_entry_us: int = 0  # converted from seconds
+
+
+class SignalAShortConfig(BaseModel):
+    enabled: bool = False
+    vwap_near_ratio: float = 0.993
+    bounce_ratio: float = 0.006
+    entry_start_time: int = 92000000000
+    entry_end_time: int = 110000000000
+    pre_condition_start_time: int = 91500000000
+    pre_condition_vwap_ratio: float = 1.007
     trade_zone_max_increase_ratio: float = 0.085
     max_near_to_entry_us: int = 0  # converted from seconds
 
 
 class SignalBConfig(BaseModel):
     enabled: bool = False
+    # Current SignalB evaluator is long-oriented; short-side compatibility is disabled.
+    supports_short: bool = False
     vol_contract_ratio: float = 0.0
     rolling_low_duration_us: float = 0.0
     rolling_sum_short_duration_us: float = 0.0
@@ -111,7 +132,24 @@ class ExecutionConfig(BaseModel):
     slippage_bps: float = 0.0
 
 
+def validate_execution_split_invariants(config: ExecutionConfig) -> None:
+    """Validate split-related invariants used by entry sizing."""
+    if config.take_profit_splits <= 0:
+        raise ValueError(
+            f"Invalid Order.take_profit_splits={config.take_profit_splits}; must be > 0"
+        )
+    if config.reserve_limit_up_splits < 0:
+        raise ValueError(
+            f"Invalid Order.reserve_limit_up_splits={config.reserve_limit_up_splits}; must be >= 0"
+        )
+    if config.take_profit_splits + config.reserve_limit_up_splits <= 0:
+        raise ValueError(
+            "Invalid split denominator: take_profit_splits + reserve_limit_up_splits must be > 0"
+        )
+
+
 class StrategyGlobalConfig(BaseModel):
+    trade_mode: TradeMode = "long"
     market_rally_disable_threshold: float = 0.02
     market_open_min_chg: float = 0.0
     single_group_rank_filter: bool = True
@@ -133,6 +171,7 @@ class NormalizedStrategyConfig(BaseModel):
 
     strategy: StrategyGlobalConfig = StrategyGlobalConfig()
     signal_a: SignalAConfig = SignalAConfig()
+    signal_a_short: SignalAShortConfig = SignalAShortConfig()
     signal_b: SignalBConfig = SignalBConfig()
     strong_group: StrongGroupConfig = StrongGroupConfig()
     strong_single: StrongSingleConfig = StrongSingleConfig()

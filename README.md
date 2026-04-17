@@ -23,6 +23,25 @@ cd exec
 uv run python -m tw_signal_engine.cli.run_daily_replay --date 20260129
 ```
 
+To override default input paths for all CLI entrypoints, set environment variables:
+
+```bash
+export TW_SIGNAL_DATA_DIR=/absolute/path/to/tick-data
+export TW_SIGNAL_FILES_DIR=/absolute/path/to/symbols
+export TW_SIGNAL_GROUP_FILE=/absolute/path/to/group.csv
+```
+
+For project-local defaults with direnv:
+
+```bash
+cat > .envrc <<'EOF'
+export TW_SIGNAL_DATA_DIR=/absolute/path/to/tick-data
+export TW_SIGNAL_FILES_DIR=/absolute/path/to/symbols
+export TW_SIGNAL_GROUP_FILE=/absolute/path/to/group.csv
+EOF
+direnv allow
+```
+
 Batch replay is also available:
 
 ```bash
@@ -40,6 +59,12 @@ For live/server workflows, install live runtime dependencies:
 ```bash
 uv sync --extra live
 ```
+
+## Signal Direction Modes
+
+- Default strategy mode is `Strategy.trade_mode=long`.
+- The default short-side signal path is `SignalAShort.enabled=true` (runs alongside `SignalA`/`SignalB` during the same replay).
+- `Strategy.trade_mode=short` is a legacy compatibility mode that remains supported. Use it only when you need historical short-only behavior from older runs.
 
 ## Repository Guide
 

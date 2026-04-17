@@ -1,16 +1,16 @@
-"""Signal A: VWAP touch + bounce detection."""
+"""Signal A Short: mirrored VWAP touch + rejection detection."""
 
 from __future__ import annotations
 
-from tw_signal_engine.config.strategy_config import SignalAConfig
+from tw_signal_engine.config.strategy_config import SignalAShortConfig
 from tw_signal_engine.records.reference_records import ReferenceSymbol
 from tw_signal_engine.state.signal_state import SignalAState
 from tw_signal_engine.state.symbol_state import IndexData
 
 
-def evaluate_signal_a(
+def evaluate_signal_a_short(
     state: SignalAState,
-    config: SignalAConfig,
+    config: SignalAShortConfig,
     idx: IndexData,
     price: int,
     match_time_str: int,
@@ -18,7 +18,7 @@ def evaluate_signal_a(
     match_type: str,
     f1: ReferenceSymbol | None,
 ) -> tuple[bool, str]:
-    """Evaluate Signal A for one tick.
+    """Evaluate Signal A Short for one tick.
 
     Returns (triggered, trigger_match_type).
     """
@@ -38,16 +38,16 @@ def evaluate_signal_a(
 
     # Pre-condition check
     if match_time_str >= config.pre_condition_start_time:
-        if price <= idx.vwap * config.pre_condition_vwap_ratio or state.forbidden:
+        if price >= idx.vwap * config.pre_condition_vwap_ratio or state.forbidden:
             state.forbidden = True
             return False, "None"
 
-    # Max increase ratio filter
+    # Max increase ratio filter (mirrored)
     if f1 is not None:
         prev_close = f1.previous_close * 10000
         if prev_close > 0:
             pct_chg = (price - prev_close) / prev_close
-            if pct_chg > config.trade_zone_max_increase_ratio:
+            if pct_chg < -config.trade_zone_max_increase_ratio:
                 return False, "None"
 
     vwap = idx.vwap
@@ -56,15 +56,15 @@ def evaluate_signal_a(
 
     pv_ratio = price / vwap
 
-    # Phase 1: detect price approaching VWAP
+    # Phase 1: detect price approaching VWAP from below
     if not state.near_vwap:
-        if pv_ratio <= config.vwap_near_ratio:
+        if pv_ratio >= config.vwap_near_ratio:
             state.near_vwap = True
             state.near_vwap_time = match_time_str
             state.near_vwap_time_us = match_time_us
             state.near_vwap_pv_ratio = pv_ratio
-            state.low_since_near = price
-            state.high_since_near = 0
+            state.high_since_near = price
+            state.low_since_near = 0
         return False, "None"
 
     # Timeout check
@@ -72,14 +72,14 @@ def evaluate_signal_a(
         state.triggered = True
         return False, "None"
 
-    if price < state.low_since_near:
-        state.low_since_near = price
-    bounce = (
-        (price - state.low_since_near) / state.low_since_near
-        if state.low_since_near > 0
+    if price > state.high_since_near:
+        state.high_since_near = price
+    rejection = (
+        (state.high_since_near - price) / state.high_since_near
+        if state.high_since_near > 0
         else 0.0
     )
-    if bounce >= config.bounce_ratio:
+    if rejection >= config.bounce_ratio:
         state.triggered = True
         return True, match_type
 

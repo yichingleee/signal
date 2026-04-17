@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from tw_signal_engine.config.strategy_config import (
     ExecutionConfig,
     LiveConfig,
     NormalizedStrategyConfig,
     SignalAConfig,
+    SignalAShortConfig,
     SignalBConfig,
     StrategyGlobalConfig,
     StrongGroupConfig,
     StrongSingleConfig,
+    TradeMode,
+    validate_execution_split_invariants,
 )
 
 
@@ -29,7 +34,13 @@ def _min_to_us(minutes: float) -> float:
 def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrategyConfig:
     """Build a NormalizedStrategyConfig from raw INI sections."""
     strat_raw = raw.get("Strategy", {})
+    trade_mode = _get(strat_raw, "trade_mode", "long").lower()
+    if trade_mode not in {"long", "short"}:
+        raise ValueError(f"Invalid Strategy.trade_mode: {trade_mode}")
+    trade_mode_typed = cast(TradeMode, trade_mode)
+
     strategy = StrategyGlobalConfig(
+        trade_mode=trade_mode_typed,
         market_rally_disable_threshold=float(_get(strat_raw, "market_rally_disable_threshold", "0.02")),
         market_open_min_chg=float(_get(strat_raw, "market_open_min_chg", "0.0")),
     )
@@ -46,18 +57,49 @@ def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrat
     signal_a = SignalAConfig(
         enabled=_bool(_get(sa_raw, "enabled", "false")),
         vwap_near_ratio=float(_get(sa_raw, "vwap_near_ratio", "1.005")),
+        short_vwap_near_ratio=float(_get(sa_raw, "short_vwap_near_ratio", "0.993")),
         bounce_ratio=float(_get(sa_raw, "bounce_ratio", "0.006")),
         entry_start_time=int(_get(sa_raw, "entry_start_time", "92000000000")),
         entry_end_time=int(_get(sa_raw, "entry_end_time", "110000000000")),
         pre_condition_start_time=int(_get(sa_raw, "pre_condition_start_time", "91500000000")),
         pre_condition_vwap_ratio=float(_get(sa_raw, "pre_condition_vwap_ratio", "0.993")),
+        short_pre_condition_vwap_ratio=float(_get(sa_raw, "short_pre_condition_vwap_ratio", "1.007")),
         trade_zone_max_increase_ratio=float(_get(sa_raw, "trade_zone_max_increase_ratio", "0.085")),
         max_near_to_entry_us=int(float(_get(sa_raw, "max_near_to_entry_sec", "0")) * 1_000_000),
     )
 
+    # SignalAShort (new independent short signal)
+    sas_raw = raw.get("SignalAShort", {})
+    signal_a_short = SignalAShortConfig(
+        enabled=_bool(_get(sas_raw, "enabled", "false")),
+        vwap_near_ratio=float(_get(sas_raw, "vwap_near_ratio", _get(sa_raw, "short_vwap_near_ratio", "0.993"))),
+        bounce_ratio=float(_get(sas_raw, "bounce_ratio", _get(sa_raw, "bounce_ratio", "0.006"))),
+        entry_start_time=int(_get(sas_raw, "entry_start_time", _get(sa_raw, "entry_start_time", "92000000000"))),
+        entry_end_time=int(_get(sas_raw, "entry_end_time", _get(sa_raw, "entry_end_time", "110000000000"))),
+        pre_condition_start_time=int(
+            _get(sas_raw, "pre_condition_start_time", _get(sa_raw, "pre_condition_start_time", "91500000000"))
+        ),
+        pre_condition_vwap_ratio=float(
+            _get(
+                sas_raw,
+                "pre_condition_vwap_ratio",
+                _get(sa_raw, "short_pre_condition_vwap_ratio", "1.007"),
+            )
+        ),
+        trade_zone_max_increase_ratio=float(
+            _get(sas_raw, "trade_zone_max_increase_ratio", _get(sa_raw, "trade_zone_max_increase_ratio", "0.085"))
+        ),
+        max_near_to_entry_us=int(
+            float(_get(sas_raw, "max_near_to_entry_sec", _get(sa_raw, "max_near_to_entry_sec", "0"))) * 1_000_000
+        ),
+    )
+
     # SignalB
     sb_raw = raw.get("SignalB", {})
-    signal_b = SignalBConfig(enabled=_bool(_get(sb_raw, "enabled", "false")))
+    signal_b = SignalBConfig(
+        enabled=_bool(_get(sb_raw, "enabled", "false")),
+        supports_short=_bool(_get(sb_raw, "supports_short", "false")),
+    )
     if signal_b.enabled:
         signal_b.vol_contract_ratio = float(_get(sb_raw, "vol_contract_ratio", "0"))
         signal_b.rolling_low_duration_us = _min_to_us(float(_get(sb_raw, "ROLLING_LOW_DURATION", "0")))
@@ -158,6 +200,7 @@ def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrat
         tax_rate=float(_get(order_raw, "tax_rate", "0")),
         slippage_bps=float(_get(order_raw, "slippage_bps", "0")),
     )
+    validate_execution_split_invariants(execution)
 
     # Live config (optional section)
     live_raw = raw.get("Live", {})
@@ -174,6 +217,7 @@ def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrat
     return NormalizedStrategyConfig(
         strategy=strategy,
         signal_a=signal_a,
+        signal_a_short=signal_a_short,
         signal_b=signal_b,
         strong_group=strong_group,
         strong_single=strong_single,

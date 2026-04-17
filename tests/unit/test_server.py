@@ -149,6 +149,7 @@ class TestLiveState:
 
         entry = EntryTrade(
             symbol="2330",
+            side="short",
             signal_type="SignalA",
             enter_cause="StrongGroup",
             entry_time_raw=93000000000,
@@ -162,6 +163,7 @@ class TestLiveState:
 
         positions = state.get_positions()
         assert "2330" in positions
+        assert positions["2330"]["side"] == "short"
         assert positions["2330"]["signal_type"] == "SignalA"
 
         # Now exit
@@ -181,6 +183,7 @@ class TestLiveState:
 
         trades = state.get_completed_trades()
         assert len(trades) == 1
+        assert trades[0]["side"] == "long"
         assert trades[0]["pnl"] == 1000.0
 
     def test_on_signal(self):

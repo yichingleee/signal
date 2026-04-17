@@ -120,12 +120,14 @@ class LiveState:
         with self._lock:
             self._active_entries[symbol] = {
                 "symbol": symbol,
+                "side": trade.side,
                 "signal_type": trade.signal_type,
                 "enter_cause": trade.enter_cause,
                 "entry_time_raw": trade.entry_time_raw,
                 "entry_price": trade.entry_price,
                 "entry_vwap": trade.entry_vwap,
                 "group_name": trade.group_name,
+                "entry_qty": trade.entry_qty,
             }
 
     def _on_exit(self, symbol: str, cause: str, record: TradeRecord) -> None:
@@ -133,6 +135,7 @@ class LiveState:
             self._active_entries.pop(symbol, None)
             self._completed_trades.append({
                 "symbol": record.symbol,
+                "side": record.side,
                 "signal_type": record.signal_type,
                 "pnl": record.pnl,
                 "return_pct": record.return_pct,

@@ -6,6 +6,15 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
+from tw_signal_engine.cli.default_paths import (
+    data_dir_help,
+    default_data_dir,
+    default_files_dir,
+    default_group_file,
+    files_dir_help,
+    group_file_help,
+)
+
 
 def _get_trading_dates(start: str, end: str, data_dir: str = "./data/") -> list[str]:
     """Find all trading dates between start and end that have data files."""
@@ -27,9 +36,9 @@ def main() -> None:
     parser.add_argument("--start", required=True, help="Start date YYYYMMDD")
     parser.add_argument("--end", required=True, help="End date YYYYMMDD")
     parser.add_argument("--config", default="./cfg/parameter.cfg", help="Config file path")
-    parser.add_argument("--data-dir", default="./data/", help="Data directory")
-    parser.add_argument("--files-dir", default="./files/", help="Symbol files directory")
-    parser.add_argument("--group-file", default="./files/group.csv", help="Group membership file")
+    parser.add_argument("--data-dir", default=default_data_dir(), help=data_dir_help())
+    parser.add_argument("--files-dir", default=default_files_dir(), help=files_dir_help())
+    parser.add_argument("--group-file", default=default_group_file(), help=group_file_help())
     parser.add_argument("--no-cache", action="store_true", help="Disable history cache")
     parser.add_argument("--no-charts", action="store_true", help="Skip chart generation")
     parser.add_argument("--cost-model", default="", help="Override cost params: 'commission=0.001425,tax=0.0015'")
