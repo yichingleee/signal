@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tw_signal_engine.config.strategy_config import SignalAConfig
+from tw_signal_engine.config.strategy_config import SignalAConfig, TradeMode
 from tw_signal_engine.records.reference_records import ReferenceSymbol
 from tw_signal_engine.state.signal_state import SignalAState
 from tw_signal_engine.state.symbol_state import IndexData
@@ -11,6 +11,7 @@ from tw_signal_engine.state.symbol_state import IndexData
 def evaluate_signal_a(
     state: SignalAState,
     config: SignalAConfig,
+    trade_mode: TradeMode,
     idx: IndexData,
     price: int,
     match_time_str: int,
@@ -28,6 +29,7 @@ def evaluate_signal_a(
         if state.near_vwap:
             state.near_vwap = False
             state.low_since_near = 0
+            state.high_since_near = 0
             state.near_vwap_time = 0
             state.near_vwap_time_us = 0
             state.near_vwap_pv_ratio = 0.0
@@ -37,15 +39,25 @@ def evaluate_signal_a(
 
     # Pre-condition check
     if match_time_str >= config.pre_condition_start_time:
-        if price <= idx.vwap * config.pre_condition_vwap_ratio or state.forbidden:
-            state.forbidden = True
-            return False, "None"
+        if trade_mode == "short":
+            if price >= idx.vwap * config.short_pre_condition_vwap_ratio or state.forbidden:
+                state.forbidden = True
+                return False, "None"
+        else:
+            if price <= idx.vwap * config.pre_condition_vwap_ratio or state.forbidden:
+                state.forbidden = True
+                return False, "None"
 
     # Max increase ratio filter
     if f1 is not None:
         prev_close = f1.previous_close * 10000
-        if prev_close > 0 and (price - prev_close) / prev_close > config.trade_zone_max_increase_ratio:
-            return False, "None"
+        if prev_close > 0:
+            pct_chg = (price - prev_close) / prev_close
+            if trade_mode == "short":
+                if pct_chg < -config.trade_zone_max_increase_ratio:
+                    return False, "None"
+            elif pct_chg > config.trade_zone_max_increase_ratio:
+                return False, "None"
 
     vwap = idx.vwap
     if vwap <= 0:
@@ -55,12 +67,19 @@ def evaluate_signal_a(
 
     # Phase 1: detect price approaching VWAP
     if not state.near_vwap:
-        if pv_ratio <= config.vwap_near_ratio:
+        if (trade_mode == "short" and pv_ratio >= config.short_vwap_near_ratio) or (
+            trade_mode == "long" and pv_ratio <= config.vwap_near_ratio
+        ):
             state.near_vwap = True
             state.near_vwap_time = match_time_str
             state.near_vwap_time_us = match_time_us
             state.near_vwap_pv_ratio = pv_ratio
-            state.low_since_near = price
+            if trade_mode == "short":
+                state.high_since_near = price
+                state.low_since_near = 0
+            else:
+                state.low_since_near = price
+                state.high_since_near = 0
         return False, "None"
 
     # Timeout check
@@ -68,14 +87,27 @@ def evaluate_signal_a(
         state.triggered = True
         return False, "None"
 
-    # Track the low
-    if price < state.low_since_near:
-        state.low_since_near = price
-
-    # Phase 2: bounce detection
-    bounce = (price - state.low_since_near) / state.low_since_near if state.low_since_near > 0 else 0.0
-    if bounce >= config.bounce_ratio:
-        state.triggered = True
-        return True, match_type
+    if trade_mode == "short":
+        if price > state.high_since_near:
+            state.high_since_near = price
+        rejection = (
+            (state.high_since_near - price) / state.high_since_near
+            if state.high_since_near > 0
+            else 0.0
+        )
+        if rejection >= config.bounce_ratio:
+            state.triggered = True
+            return True, match_type
+    else:
+        if price < state.low_since_near:
+            state.low_since_near = price
+        bounce = (
+            (price - state.low_since_near) / state.low_since_near
+            if state.low_since_near > 0
+            else 0.0
+        )
+        if bounce >= config.bounce_ratio:
+            state.triggered = True
+            return True, match_type
 
     return False, "None"

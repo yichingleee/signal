@@ -31,6 +31,7 @@ class _LogWriterStub:
         cash: float,
         symbol_cash: float,
         cause: str,
+        side: str,
         qty: float,
     ) -> None:
         self.leave_rows.append((symbol, cause))
@@ -166,6 +167,7 @@ def test_run_daily_replay_uses_injected_provider_and_callbacks(monkeypatch: pyte
             symbol_cash: float,
             signal_type: str,
             cause: str,
+            side: str,
             remaining_qty: float,
             group_info: str,
         ) -> None:
@@ -179,6 +181,7 @@ def test_run_daily_replay_uses_injected_provider_and_callbacks(monkeypatch: pyte
             cash: float,
             symbol_cash: float,
             cause: str,
+            side: str,
             remaining_qty: float,
         ) -> None:
             return None
@@ -191,13 +194,14 @@ def test_run_daily_replay_uses_injected_provider_and_callbacks(monkeypatch: pyte
             raise AssertionError("FileReplayProvider should not be constructed when provider is injected")
 
     def _fake_execute_entry(*args, **kwargs) -> None:
-        tick = args[1]
-        pos = args[5]
-        idx = args[2]
+        tick = args[2]
+        pos = args[6]
+        idx = args[3]
         pos.stocks[tick.symbol] = 1.0
         pos.symbol_cash[tick.symbol] = -100.0
         pos.open_trades[tick.symbol] = EntryTrade(
             symbol=tick.symbol,
+            side="long",
             signal_type="SignalA",
             enter_cause="StrongGroup",
             entry_time_raw=tick.match_time_str,
@@ -212,6 +216,7 @@ def test_run_daily_replay_uses_injected_provider_and_callbacks(monkeypatch: pyte
         symbol,
         price,
         bid_price,
+        ask_price,
         match_time_str,
         signal_type,
         entry_idx,
@@ -219,7 +224,7 @@ def test_run_daily_replay_uses_injected_provider_and_callbacks(monkeypatch: pyte
         completed_trades,
         trade_date="",
     ):
-        if pos.stocks.get(symbol, 0) <= 0:
+        if abs(pos.stocks.get(symbol, 0)) <= 0.001:
             return None
         if match_time_str < 93100000000:
             return None

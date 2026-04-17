@@ -68,23 +68,28 @@ def _finalize_open_positions(
     dummy_tick = MarketTick()
     dummy_tick.match_time_str = last_match_time_str
     for symbol, qty in list(pos.stocks.items()):
-        if qty <= 0:
+        if abs(qty) <= 0.001:
             continue
         lp = last_price.get(symbol, 0)
         dummy_tick.symbol = symbol
         dummy_tick.match.price = lp
         dummy_tick.bid[0].price = lp
+        dummy_tick.ask[0].price = lp
         sig_type = entry_signal_type.get(symbol, "")
         eidx = entry_idx_map.get(symbol, IndexData())
         cause = on_tick_exit(
             config.execution, symbol, lp, lp,
+            lp,
             dummy_tick.match_time_str, sig_type, eidx, pos, completed_trades,
             trade_date=trade_date,
         )
         if cause:
+            side = "long"
+            if completed_trades:
+                side = completed_trades[-1].side
             log_writer.write_leave(
                 symbol, dummy_tick.match_time_str, lp,
-                pos.cash, pos.symbol_cash.get(symbol, 0), cause,
+                pos.cash, pos.symbol_cash.get(symbol, 0), cause, side,
                 pos.stocks.get(symbol, 0),
             )
             if hooks is not None and hooks.on_exit is not None and completed_trades:
@@ -178,6 +183,7 @@ def _build_dashboard_snapshot(
     signal_a_map: dict[str, SignalAState],
     pos: PositionState,
     completed_trades: list[TradeRecord],
+    trade_mode: str,
 ) -> DashboardSnapshot:
     symbol_to_group = _build_primary_group_map(symbol_to_groups)
 
@@ -198,7 +204,7 @@ def _build_dashboard_snapshot(
                 signal_state = "near_vwap"
             elif state.forbidden:
                 signal_state = "forbidden"
-        status = "holding" if pos.stocks.get(symbol, 0) > 0 else ""
+        status = "holding" if abs(pos.stocks.get(symbol, 0)) > 0.001 else ""
         vwap = idx.vwap
         vwap_rows.append(
             VWAPMonitorEntry(
@@ -216,7 +222,7 @@ def _build_dashboard_snapshot(
 
     preparing: list[PreparingEntry] = []
     for symbol, state in signal_a_map.items():
-        if not state.near_vwap or state.triggered or pos.stocks.get(symbol, 0) > 0:
+        if not state.near_vwap or state.triggered or abs(pos.stocks.get(symbol, 0)) > 0.001:
             continue
         idx_for_symbol = latest_idx_map.get(symbol)
         if idx_for_symbol is None:
@@ -241,6 +247,7 @@ def _build_dashboard_snapshot(
                 vwap=idx_for_symbol.vwap / 10000,
                 day_low=idx_for_symbol.day_low / 10000 if idx_for_symbol.day_low > 0 else 0.0,
                 near_vwap_pv_ratio=state.near_vwap_pv_ratio,
+                side=trade_mode,
             )
         )
 
@@ -249,7 +256,13 @@ def _build_dashboard_snapshot(
         if entry.signal_type != "SignalA":
             continue
         price_raw = last_price.get(symbol, 0)
-        pnl_pct = (price_raw / 10000 - entry.entry_price) / entry.entry_price if entry.entry_price > 0 else 0.0
+        if entry.entry_price > 0:
+            if entry.side == "short":
+                pnl_pct = (entry.entry_price - price_raw / 10000) / entry.entry_price
+            else:
+                pnl_pct = (price_raw / 10000 - entry.entry_price) / entry.entry_price
+        else:
+            pnl_pct = 0.0
         ref = f1_map.get(symbol)
         name = getattr(ref, "name", symbol)
         entered.append(
@@ -261,6 +274,8 @@ def _build_dashboard_snapshot(
                 entry_price=entry.entry_price,
                 current_price=price_raw / 10000,
                 pnl_pct=pnl_pct,
+                side=entry.side,
+                qty=pos.stocks.get(symbol, 0),
                 day_high=entry.day_high_at_entry,
                 entry_time=str(entry.entry_time_raw),
             )
@@ -284,6 +299,7 @@ def _build_dashboard_snapshot(
                 entry_time=str(trade.entry_time_raw),
                 exit_time=str(trade.exit_time_raw),
                 exit_cause=trade.final_leave_cause,
+                side=trade.side,
             )
         )
 
@@ -353,6 +369,7 @@ def run_daily_replay(
     print(f"signalB_enabled: [{config.signal_b.enabled}]")
     print(f"strongGroup_enabled: [{config.strong_group.enabled}]")
     print(f"strongSingle_enabled: [{config.strong_single.enabled}]")
+    print(f"trade_mode: [{config.strategy.trade_mode}]")
 
     # 2. Load reference data
     f1_map = load_symbol_reference(trade_date, files_dir)
@@ -385,6 +402,7 @@ def run_daily_replay(
         trading_val=trading_val,
         f1_map=f1_map,
         prev_day_limit_up=prev_day_lu,
+        trade_mode=config.strategy.trade_mode,
     )
     t0 = time.time()
     strong_group.initialize_validity()
@@ -396,7 +414,8 @@ def run_daily_replay(
         trading_val=trading_val,
         f1_map=f1_map,
     )
-    strong_single_valid_symbols = strong_single.initialize_validity() if config.strong_single.enabled else set()
+    strong_single_enabled_for_entry = config.strong_single.enabled and config.strategy.trade_mode == "long"
+    strong_single_valid_symbols = strong_single.initialize_validity() if strong_single_enabled_for_entry else set()
 
     # 5. Build replay universe
     tick_filter = build_replay_universe(
@@ -481,6 +500,7 @@ def run_daily_replay(
                 signal_a_map=signal_a_map,
                 pos=pos,
                 completed_trades=completed_trades,
+                trade_mode=config.strategy.trade_mode,
             )
             on_dashboard_snapshot(snapshot)
 
@@ -528,23 +548,27 @@ def run_daily_replay(
             hooks.on_tick(tick, idx)
 
         # Exit logic
-        if pos.stocks.get(symbol, 0) > 0:
+        if abs(pos.stocks.get(symbol, 0)) > 0.001:
             sig_type = entry_signal_type.get(symbol, "")
             eidx = entry_idx_map.get(symbol, IndexData())
             cause = on_tick_exit(config.execution, symbol, tick.match.price, tick.bid[0].price,
+                                tick.ask[0].price,
                                 tick.match_time_str, sig_type, eidx, pos, completed_trades,
                                 trade_date=trade_date)
             if cause:
+                side = "long"
+                if completed_trades:
+                    side = completed_trades[-1].side
                 log_writer.write_leave(symbol, tick.match_time_str, tick.match.price,
-                                       pos.cash, pos.symbol_cash.get(symbol, 0), cause,
+                                       pos.cash, pos.symbol_cash.get(symbol, 0), cause, side,
                                        pos.stocks.get(symbol, 0))
                 if hooks is not None and hooks.on_exit is not None and completed_trades:
                     hooks.on_exit(symbol, cause, completed_trades[-1])
 
-        if not (pos.stocks.get(symbol, 0) > 0 or market_gate.market_disabled):
+        if not (abs(pos.stocks.get(symbol, 0)) > 0.001 or market_gate.market_disabled):
             # Screening (skip disabled features entirely)
             single = False
-            if config.strong_single.enabled:
+            if strong_single_enabled_for_entry:
                 single = strong_single.on_tick(idx, symbol, tick.match.price, tick.match.qty,
                                                tick.match_time_us, tick.match_time_str)
                 if single and config.strong_group.enabled and config.strategy.single_group_rank_filter:
@@ -557,12 +581,16 @@ def run_daily_replay(
                                              tick.match_time_us, tick.match_time_str, tick.is_limit_up_locked)
 
             match_type = "None"
-            if single and group:
-                match_type = "Both"
-            elif single:
-                match_type = "StrongSingle"
-            elif group:
-                match_type = "StrongGroup"
+            if config.strategy.trade_mode == "short":
+                if group:
+                    match_type = "StrongGroup"
+            else:
+                if single and group:
+                    match_type = "Both"
+                elif single:
+                    match_type = "StrongSingle"
+                elif group:
+                    match_type = "StrongGroup"
 
             if hooks is not None and hooks.on_screening is not None:
                 hooks.on_screening(symbol, match_type, match_type != "None")
@@ -578,7 +606,7 @@ def run_daily_replay(
                 if symbol not in signal_a_map:
                     signal_a_map[symbol] = SignalAState(symbol=symbol)
                 is_signal_a, trigger_mt_a = evaluate_signal_a(
-                    signal_a_map[symbol], config.signal_a, idx,
+                    signal_a_map[symbol], config.signal_a, config.strategy.trade_mode, idx,
                     tick.match.price, tick.match_time_str, tick.match_time_us,
                     match_type, f1,
                 )
@@ -619,12 +647,12 @@ def run_daily_replay(
                     tmt = trigger_mt_b
 
                 allowed, block_reason = should_enter(
-                    config.execution, tick, tmt, sig_type, pos, is_friday,
+                    config.execution, config.strategy.trade_mode, tick, tmt, sig_type, pos, is_friday,
                     p0050_prev, market_gate.p0050_latest, market_gate.market_open_chg_pct,
-                    strong_single.forbidden if config.strong_single.enabled else None,
+                    strong_single.forbidden if strong_single_enabled_for_entry else None,
                 )
                 if allowed:
-                    execute_entry(config.execution, tick, idx, tmt, sig_type, pos, f1_map,
+                    execute_entry(config.execution, config.strategy.trade_mode, tick, idx, tmt, sig_type, pos, f1_map,
                                   strong_group, p0050_prev, market_gate.p0050_latest,
                                   market_gate.market_open_chg_pct)
                     # Initialize MAE/MFE tracking at entry price
@@ -652,6 +680,7 @@ def run_daily_replay(
                     log_writer.write_entry(
                         symbol, tick.match_time_str, tick.match.price,
                         pos.cash, pos.symbol_cash.get(symbol, 0), sig_type, tmt,
+                        pos.open_trades[symbol].side,
                         pos.stocks.get(symbol, 0), group_info,
                     )
                 else:

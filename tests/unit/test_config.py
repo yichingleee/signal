@@ -33,7 +33,10 @@ class TestLoadLegacyIni:
 class TestNormalizeStrategyConfig:
     def test_defaults(self):
         config = normalize_strategy_config({})
+        assert config.strategy.trade_mode == "long"
         assert config.signal_a.enabled is False
+        assert config.signal_a.short_vwap_near_ratio == 0.993
+        assert config.signal_a.short_pre_condition_vwap_ratio == 1.007
         assert config.signal_b.enabled is False
         assert config.execution.position_cash == 10_000_000.0
 
@@ -48,3 +51,17 @@ class TestNormalizeStrategyConfig:
         config = normalize_strategy_config(raw)
         assert config.execution.position_cash == 5_000_000.0
         assert config.execution.stop_loss_ratio_a == 0.995
+
+    def test_trade_mode_short(self):
+        raw = {"Strategy": {"trade_mode": "short"}}
+        config = normalize_strategy_config(raw)
+        assert config.strategy.trade_mode == "short"
+
+    def test_invalid_trade_mode_raises(self):
+        raw = {"Strategy": {"trade_mode": "invalid"}}
+        try:
+            normalize_strategy_config(raw)
+        except ValueError as exc:
+            assert "trade_mode" in str(exc)
+        else:
+            raise AssertionError("Expected ValueError for invalid trade_mode")

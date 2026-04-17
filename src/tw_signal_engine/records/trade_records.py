@@ -12,6 +12,7 @@ class EntryTrade:
     symbol: str
     signal_type: str
     enter_cause: str
+    side: str = "long"
     entry_time_raw: int = 0
     baseline: float = 0.0
     had_take_profit: bool = False

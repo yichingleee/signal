@@ -109,16 +109,18 @@ class SnapshotWriter:
         # Serialize positions
         positions: dict[str, dict[str, Any]] = {}
         for sym, qty in pos.stocks.items():
-            if qty > 0:
+            if abs(qty) > 0.001:
                 positions[sym] = {
                     "qty": qty,
                     "cash": pos.symbol_cash.get(sym, 0),
                     "signal_type": "",
+                    "side": "short" if qty < 0 else "long",
                 }
                 if sym in pos.open_trades:
                     ot = pos.open_trades[sym]
                     positions[sym]["signal_type"] = ot.signal_type
                     positions[sym]["entry_price"] = ot.entry_price
+                    positions[sym]["side"] = ot.side
 
         # New trades since last snapshot
         new_trade_count = len(completed_trades) - self._last_trade_count
@@ -127,6 +129,7 @@ class SnapshotWriter:
             for tr in completed_trades[-new_trade_count:]:
                 new_trades.append({
                     "symbol": tr.symbol,
+                    "side": tr.side,
                     "signal_type": tr.signal_type,
                     "pnl": tr.pnl,
                     "return_pct": tr.return_pct,

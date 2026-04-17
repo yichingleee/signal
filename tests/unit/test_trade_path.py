@@ -54,7 +54,7 @@ class TestMAEMFETracking:
 
         # Force time exit
         completed: list = []
-        on_tick_exit(config, "2330", 505000, 504000, 132500000000, "SignalA", IndexData(), pos, completed)
+        on_tick_exit(config, "2330", 505000, 504000, 506000, 132500000000, "SignalA", IndexData(), pos, completed)
 
         assert len(completed) == 1
         tr = completed[0]
@@ -72,7 +72,7 @@ class TestMAEMFETracking:
         pos = _make_pos(entry_price=50.0)
 
         completed: list = []
-        on_tick_exit(config, "2330", 500000, 499000, 132500000000, "SignalA", IndexData(), pos, completed)
+        on_tick_exit(config, "2330", 500000, 499000, 501000, 132500000000, "SignalA", IndexData(), pos, completed)
 
         assert len(completed) == 1
         tr = completed[0]
@@ -86,11 +86,11 @@ class TestMAEMFETracking:
 
         completed: list = []
         # Price drops to 49.0 - should update trade_low
-        on_tick_exit(config, "2330", 490000, 489000, 100000000000, "SignalA", IndexData(), pos, completed)
+        on_tick_exit(config, "2330", 490000, 489000, 491000, 100000000000, "SignalA", IndexData(), pos, completed)
         assert pos.trade_low["2330"] == 490000
 
         # Price drops further to 48.0
-        on_tick_exit(config, "2330", 480000, 479000, 100500000000, "SignalA", IndexData(), pos, completed)
+        on_tick_exit(config, "2330", 480000, 479000, 481000, 100500000000, "SignalA", IndexData(), pos, completed)
         assert pos.trade_low["2330"] == 480000
 
     def test_mfe_updates_on_tick(self):
@@ -100,7 +100,7 @@ class TestMAEMFETracking:
 
         completed: list = []
         # Price rises to 51.0
-        on_tick_exit(config, "2330", 510000, 509000, 100000000000, "SignalA", IndexData(), pos, completed)
+        on_tick_exit(config, "2330", 510000, 509000, 511000, 100000000000, "SignalA", IndexData(), pos, completed)
         assert pos.trade_high["2330"] == 510000
 
     def test_trade_low_high_cleaned_on_close(self):
@@ -109,7 +109,7 @@ class TestMAEMFETracking:
         pos = _make_pos(entry_price=50.0)
 
         completed: list = []
-        on_tick_exit(config, "2330", 500000, 499000, 132500000000, "SignalA", IndexData(), pos, completed)
+        on_tick_exit(config, "2330", 500000, 499000, 501000, 132500000000, "SignalA", IndexData(), pos, completed)
 
         assert "2330" not in pos.trade_low
         assert "2330" not in pos.trade_high

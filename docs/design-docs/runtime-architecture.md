@@ -23,6 +23,7 @@ Detailed file conventions live in [docs/references/runtime-conventions.md](../re
 1. Loads the legacy INI file through `config/load_legacy_ini.py`.
 2. Normalizes it into typed Pydantic models through `config/normalize_strategy_config.py`.
 3. Loads the symbol reference map, derives previous-day limit-up flags, and loads group membership.
+4. Reads `Strategy.trade_mode` (`long|short`) to control screening direction, Signal A mirror behavior, and execution quote side.
 
 ### 2. History window build
 
@@ -57,6 +58,7 @@ The history loader builds:
 - `0050`
 
 `0050` is always included for market gating.
+In short mode, strong-single does not drive entries.
 
 ### 5. Stream merge
 
@@ -79,9 +81,12 @@ For each merged trade tick:
    - day low
 4. If a position is open, process exits first through `execution/trade_ledger.py`.
 5. If still flat, evaluate strong-single and strong-group screening.
+   - in short mode, strong-group weakest-path is used and strong-single entry contribution is disabled
 6. Evaluate Signal A and Signal B.
+   - Signal A uses mirrored near/rejection logic in short mode
 7. If either signal triggers, apply entry filters through `execution/should_enter()`.
 8. Execute the entry, stage take-profit orders, and write order-log rows immediately.
+   - positions use signed quantity (`+` long / `-` short)
 
 ### 7. End-of-day closeout
 
@@ -115,6 +120,9 @@ The runtime has several ordering rules that matter for correctness:
   2. time exit
   3. take-profit
   4. bailout
+- Exit fill quotes are side-aware:
+  - long closes on bid-side fallback to match
+  - short closes on ask-side fallback to match
 - Each symbol can have at most one open position at a time.
 
 ## Module Responsibilities

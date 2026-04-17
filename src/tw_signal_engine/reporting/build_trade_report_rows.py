@@ -20,7 +20,7 @@ def write_trade_report(
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow([
-            "Symbol", "SignalType", "EnterCause", "EntryTime", "ExitTime", "LeaveCause",
+            "Symbol", "Side", "SignalType", "EnterCause", "EntryTime", "ExitTime", "LeaveCause",
             "PnL", "Return%", "HoldingDuration",
             "GroupName", "GroupRank", "MemberRank", "RawMemberRank", "M1Symbol",
             "EntryPrice", "EntryVWAP", "DayHigh", "PrevClose", "0050OpenChg%",
@@ -36,7 +36,7 @@ def write_trade_report(
         for t in completed_trades:
             dur = duration_sec(t.entry_time_raw, t.exit_time_raw)
             w.writerow([
-                t.symbol, t.signal_type, t.enter_cause,
+                t.symbol, t.side, t.signal_type, t.enter_cause,
                 fmt_time(t.entry_time_raw), fmt_time(t.exit_time_raw),
                 t.final_leave_cause,
                 f"{t.pnl:.0f}", f"{t.return_pct:.2f}%", fmt_duration(dur),

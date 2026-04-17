@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tw_signal_engine.config.strategy_config import ExecutionConfig
+from tw_signal_engine.config.strategy_config import ExecutionConfig, TradeMode
 from tw_signal_engine.execution.position_sizing import compute_entry_quantity
 from tw_signal_engine.execution.taiwan_tick_size import get_price_cond
 from tw_signal_engine.records.market_event_records import MarketTick
@@ -15,8 +15,15 @@ from tw_signal_engine.state.symbol_state import IndexData
 PRICE_SCALE = 10000.0
 
 
+def _entry_fill_price(tick: MarketTick, trade_mode: TradeMode) -> int:
+    if trade_mode == "short":
+        return tick.bid[0].price if tick.bid[0].price > 0 else tick.match.price
+    return tick.ask[0].price if tick.ask[0].price > 0 else tick.match.price
+
+
 def should_enter(
     config: ExecutionConfig,
+    trade_mode: TradeMode,
     tick: MarketTick,
     match_type: str,
     signal_type: str,
@@ -45,11 +52,11 @@ def should_enter(
             return False, "max_0050_intra_chg"
     if config.disposition_stocks_enabled and tick.volatility_pause:
         return False, "volatility_pause"
-    if pos.stocks.get(tick.symbol, 0) != 0:
+    if abs(pos.stocks.get(tick.symbol, 0)) > 0.001:
         return False, "already_holding"
     if match_type == "StrongSingle" and strong_single_forbidden and strong_single_forbidden.get(tick.symbol, False):
         return False, "single_forbidden"
-    current_price = (tick.ask[0].price if tick.ask[0].price > 0 else tick.match.price) / PRICE_SCALE
+    current_price = _entry_fill_price(tick, trade_mode) / PRICE_SCALE
     if config.max_entry_price > 0 and current_price > config.max_entry_price:
         return False, "max_entry_price"
     return True, None
@@ -57,6 +64,7 @@ def should_enter(
 
 def execute_entry(
     config: ExecutionConfig,
+    trade_mode: TradeMode,
     tick: MarketTick,
     idx: IndexData,
     match_type: str,
@@ -71,29 +79,34 @@ def execute_entry(
     near_vwap_pv_ratio: float = 0.0,
 ) -> None:
     """Execute the entry: update position state, place take-profit orders."""
-    qty, effective_position = compute_entry_quantity(
-        config, tick.ask[0].price, tick.match.price, pos.trades_entered_today
+    side = "short" if trade_mode == "short" else "long"
+    entry_fill_price = _entry_fill_price(tick, trade_mode)
+    qty, _effective_position = compute_entry_quantity(
+        config, entry_fill_price, tick.match.price, pos.trades_entered_today
     )
+    signed_qty = -qty if trade_mode == "short" else qty
     pos.trades_entered_today += 1
-    pos.stocks[tick.symbol] = qty
+    pos.stocks[tick.symbol] = signed_qty
     pos.profit_taken[tick.symbol] = False
-    pos.cash -= effective_position
-    pos.symbol_cash[tick.symbol] = pos.symbol_cash.get(tick.symbol, 0.0) - effective_position
+    entry_cashflow = -signed_qty * (entry_fill_price / PRICE_SCALE)
+    pos.cash += entry_cashflow
+    pos.symbol_cash[tick.symbol] = pos.symbol_cash.get(tick.symbol, 0.0) + entry_cashflow
 
-    current_price = (tick.ask[0].price if tick.ask[0].price > 0 else tick.match.price) / PRICE_SCALE
+    current_price = entry_fill_price / PRICE_SCALE
 
     # Record open trade
     ot = EntryTrade(
         symbol=tick.symbol,
+        side=side,
         signal_type=signal_type,
         enter_cause=match_type,
         entry_time_raw=tick.match_time_str,
-        baseline=pos.symbol_cash[tick.symbol] + effective_position,
+        baseline=pos.symbol_cash[tick.symbol] - entry_cashflow,
         entry_price=current_price,
         entry_vwap=idx.vwap / 10000.0,
         day_high_at_entry=idx.day_high / 10000.0,
         is_prev_day_lu=tick.prev_limit_up,
-        entry_qty=qty,
+        entry_qty=signed_qty,
     )
 
     mi = strong_group.last_match_info.get(tick.symbol)
@@ -121,8 +134,11 @@ def execute_entry(
     pos.entered_symbols.add(tick.symbol)
 
     # Place take-profit orders
-    actual_splits = config.take_profit_splits + config.reserve_limit_up_splits
-    q = qty / actual_splits
+    if trade_mode == "short":
+        actual_splits = config.take_profit_splits
+    else:
+        actual_splits = config.take_profit_splits + config.reserve_limit_up_splits
+    q = abs(signed_qty) / actual_splits
 
     limit_up_int = 0
     if ref is not None:
@@ -130,15 +146,20 @@ def execute_entry(
 
     prices: list[int] = []
     if config.take_profit_pcts:
-        tp_base = tick.match.price if config.tp_base_entry else idx.day_high
+        tp_base = entry_fill_price if config.tp_base_entry else idx.day_high
         for i in range(min(config.take_profit_splits, len(config.take_profit_pcts))):
-            p = int(tp_base * (1.0 + config.take_profit_pcts[i]) + 0.5)
+            if trade_mode == "short":
+                p = int(tp_base * (1.0 - config.take_profit_pcts[i]) + 0.5)
+            else:
+                p = int(tp_base * (1.0 + config.take_profit_pcts[i]) + 0.5)
             if limit_up_int > 0 and p > limit_up_int:
                 p = limit_up_int
             prices.append(p)
     else:
         for i in range(min(config.take_profit_splits, len(config.take_profit_tick_offsets))):
             offset = config.take_profit_tick_offsets[i]
+            if trade_mode == "short":
+                offset = -offset
             if offset == 0:
                 prices.append(idx.day_high)
             else:
@@ -146,6 +167,10 @@ def execute_entry(
         if limit_up_int > 0:
             prices = [min(p, limit_up_int) for p in prices]
 
-    pos.reserve_stocks[tick.symbol] = q * config.reserve_limit_up_splits
-    pos.limit_up_prices[tick.symbol] = limit_up_int
+    if trade_mode == "short":
+        pos.reserve_stocks[tick.symbol] = 0.0
+        pos.limit_up_prices[tick.symbol] = 0
+    else:
+        pos.reserve_stocks[tick.symbol] = q * config.reserve_limit_up_splits
+        pos.limit_up_prices[tick.symbol] = limit_up_int
     pos.orders[tick.symbol] = [(p, q) for p in prices]

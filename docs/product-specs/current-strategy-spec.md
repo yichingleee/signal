@@ -4,6 +4,7 @@ This document describes the behavior implemented by the current Python code and 
 
 ## Current Switch State
 
+- `Strategy.trade_mode`: `long` (default; supports `long|short`)
 - `SignalA`: enabled
 - `SignalB`: disabled
 - `StrongGroup`: enabled
@@ -14,6 +15,16 @@ With the committed config, the live replay path is effectively:
 - strong-group screening
 - Signal A entries
 - stop-loss, time exit, two staged take-profit sells, then bailout
+
+## Strategy Side Mode
+
+- The strategy side is selected by `Strategy.trade_mode`.
+- `long` keeps the original behavior.
+- `short` enables weakest-group/member screening, mirrored Signal A, and short execution pricing.
+- Position quantity is signed:
+  - long: `qty > 0`
+  - short: `qty < 0`
+  - flat: `qty == 0`
 
 ## Session-Level Gates
 
@@ -69,6 +80,7 @@ Other important current behavior:
 
 - `single_group_rank_filter` still defaults to enabled in code
 - if strong-single is re-enabled later, its monthly-value candidates are included in the replay universe before group-rank filtering is applied
+- in `trade_mode=short`, strong-single does not participate in entry decisions
 
 ## Signal A
 
@@ -118,7 +130,10 @@ Important current nuance:
 
 - base notional per entry: `10,000,000`
 - `position_scale_nth` remains `1.0`, so later trades are not scaled down
-- quantity is computed from best ask when available, otherwise from match price
+- quantity uses side-aware entry quote:
+  - long: best ask (fallback match)
+  - short: best bid (fallback match)
+- quantity is persisted with sign by side (`+` long, `-` short)
 
 ## Exit Rules
 
@@ -129,10 +144,16 @@ Exit priority is:
 3. take-profit
 4. bailout
 
+Execution quote side is side-aware:
+
+- long close actions use best bid (fallback match)
+- short close actions use best ask (fallback match)
+
 ### Stop-loss
 
 - Signal A stop: `price <= entry_vwap * 0.995`
 - Signal B stop: `price <= entry_rolling_low * 0.993`
+- short mode uses mirrored stop comparisons and buy-to-cover quote side
 
 ### Time exit
 
@@ -153,6 +174,7 @@ Current implementation meaning:
 - the position is split into `5` equal slices
 - two slices are staged as limit sells at `+3%` over the entry price
 - three slices are reserved for limit-up or end-of-day handling
+- in short mode, take-profit triggers on `price <= target` (cover path) and reserve limit-up handling is not used
 
 This is not the old five-step linear grid described in historical notes.
 
@@ -160,6 +182,7 @@ This is not the old five-step linear grid described in historical notes.
 
 - bailout activates only after at least one take-profit fill
 - current threshold: `price <= day_high_at_entry * 0.8`
+- short mode mirrors bailout to a rebound-off-day-low condition with buy-to-cover execution
 
 This is much looser than the earlier stop-loss notes and is effectively a deep post-profit fallback.
 
@@ -172,5 +195,7 @@ Per replay day, the engine writes:
 - `report_trades.csv`
 - `report_summary.csv`
 - `report_by_category.csv`
+
+Trade outputs now include explicit side metadata (`long`/`short`) in `order_log` and `report_trades.csv`.
 
 The report columns and file layout are documented in [docs/references/runtime-conventions.md](../references/runtime-conventions.md).
