@@ -6,10 +6,11 @@
 
 ## Inputs
 
-- `exec/cfg/parameter.cfg`: legacy INI strategy config
-- `exec/files/Symbols_YYYYMMDD.csv`: symbol reference data for the replay date
-- `exec/files/group.csv`: group membership
-- `exec/data/TSEQuote.YYYYMMDD` and `exec/data/OTCQuote.YYYYMMDD`: replay streams
+- `cfg/parameter.cfg` (or CLI override): legacy INI strategy config
+- `Symbols_YYYYMMDD.csv` under `--files-dir` (or `TW_SIGNAL_FILES_DIR` / `./files/` fallback)
+- group CSV from `--group-file` (or `TW_SIGNAL_GROUP_FILE` / `./files/group.csv` fallback)
+- `TSEQuote.YYYYMMDD` and `OTCQuote.YYYYMMDD` under `--data-dir`
+  (or `TW_SIGNAL_DATA_DIR` / `./data/` fallback)
 - `artifacts/baseline/`: archived golden parity outputs, used by tests rather than by the runtime
 
 Detailed file conventions live in [docs/references/runtime-conventions.md](../references/runtime-conventions.md).

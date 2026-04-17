@@ -12,7 +12,7 @@ This `docs/` tree is the repository's system of record for durable project knowl
 
 ## References
 
-- [docs/references/index.md](references/index.md): file conventions, parity status, migration history, and archived notes
+- [docs/references/index.md](references/index.md): file conventions, CLI/env path defaults, parity status, migration history, and archived notes
 
 ## Execution Plans
 

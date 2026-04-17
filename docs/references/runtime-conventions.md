@@ -2,7 +2,16 @@
 
 ## Directory Layout
 
-The Python CLIs default to the original `exec/` working-directory layout.
+The Python CLIs support environment-based default paths and still preserve the original
+relative fallbacks.
+
+Path resolution order for `--data-dir`, `--files-dir`, and `--group-file`:
+
+1. explicit CLI flag value
+2. environment variable (`TW_SIGNAL_DATA_DIR`, `TW_SIGNAL_FILES_DIR`, `TW_SIGNAL_GROUP_FILE`)
+3. legacy relative fallback (`./data/`, `./files/`, `./files/group.csv`)
+
+Classic `exec/` working-directory layout:
 
 ```text
 exec/
@@ -68,6 +77,8 @@ uv run python -m tw_signal_engine.cli.run_batch_replay \
 
 - format: `GroupName,Symbol,StockName`
 - parsed as UTF-8 with BOM support
+- CLI default can point to any compatible CSV path via `TW_SIGNAL_GROUP_FILE`
+  (for example, versioned files such as `group-verYYYYMMDD.csv`)
 
 ### Replay files
 
