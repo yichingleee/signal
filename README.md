@@ -23,6 +23,25 @@ cd exec
 uv run python -m tw_signal_engine.cli.run_daily_replay --date 20260129
 ```
 
+To override default input paths for all CLI entrypoints, set environment variables:
+
+```bash
+export TW_SIGNAL_DATA_DIR=/absolute/path/to/tick-data
+export TW_SIGNAL_FILES_DIR=/absolute/path/to/symbols
+export TW_SIGNAL_GROUP_FILE=/absolute/path/to/group.csv
+```
+
+For project-local defaults with direnv:
+
+```bash
+cat > .envrc <<'EOF'
+export TW_SIGNAL_DATA_DIR=/absolute/path/to/tick-data
+export TW_SIGNAL_FILES_DIR=/absolute/path/to/symbols
+export TW_SIGNAL_GROUP_FILE=/absolute/path/to/group.csv
+EOF
+direnv allow
+```
+
 Batch replay is also available:
 
 ```bash
