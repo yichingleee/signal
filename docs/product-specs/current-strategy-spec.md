@@ -22,6 +22,7 @@ With the committed config, the live replay path is effectively:
 - The strategy side is selected by `Strategy.trade_mode`.
 - Preferred/default mode is `long`, with short-side entries coming from `SignalAShort.enabled=true`.
 - `short` is a legacy compatibility mode that remains supported for historical short-only behavior.
+- `SignalB` remains long-only; when `trade_mode=short`, it is disabled and logs a one-time warning.
 - Position quantity is signed:
   - long: `qty > 0`
   - short: `qty < 0`
@@ -129,6 +130,7 @@ Like Signal A, Signal A Short is single-fire per symbol per day.
 ## Signal B
 
 Signal B is implemented but disabled in the committed config. The code still maintains its track-zone, buffer-zone, and trade-zone state machine when enabled.
+Signal B's evaluator is currently long-oriented. In legacy `trade_mode=short`, Signal B is intentionally blocked from opening short entries until a dedicated mirrored short evaluator exists.
 
 Signal selection priority is deterministic: `SignalA` > `SignalAShort` > `SignalB`.
 
@@ -176,9 +178,10 @@ Execution quote side is side-aware:
 
 ### Stop-loss
 
-- Signal A stop: `price <= entry_vwap * 0.995`
+- Signal A family stop (`SignalA`, `SignalAShort`): `price <= entry_vwap * 0.995`
 - Signal B stop: `price <= entry_rolling_low * 0.993`
 - short-side positions use mirrored stop comparisons and buy-to-cover quote side
+- unknown signal types do not silently pass stop-loss dispatch; they emit an explicit runtime warning
 
 ### Time exit
 
@@ -200,6 +203,10 @@ Current implementation meaning:
 - two slices are staged as limit sells at `+3%` over the entry price
 - three slices are reserved for limit-up or end-of-day handling
 - for short-side positions, take-profit triggers on `price <= target` (cover path) and reserve limit-up handling is not used
+- split invariants are enforced before runtime:
+  - `take_profit_splits > 0`
+  - `reserve_limit_up_splits >= 0`
+  - `take_profit_splits + reserve_limit_up_splits > 0`
 
 This is not the old five-step linear grid described in historical notes.
 

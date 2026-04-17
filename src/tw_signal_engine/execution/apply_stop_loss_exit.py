@@ -2,11 +2,28 @@
 
 from __future__ import annotations
 
+import warnings
+from typing import NamedTuple
+
 from tw_signal_engine.config.strategy_config import ExecutionConfig, TradeMode
 from tw_signal_engine.state.position_state import PositionState
 from tw_signal_engine.state.symbol_state import IndexData
 
 PRICE_SCALE = 10000.0
+
+
+class _StopLossPolicy(NamedTuple):
+    ratio_attr: str
+    anchor_attr: str
+    family: str
+
+
+_STOP_LOSS_POLICY_MAP: dict[str, _StopLossPolicy] = {
+    # SignalA and SignalAShort share the same stop-loss family and config ratio.
+    "SignalA": _StopLossPolicy(ratio_attr="stop_loss_ratio_a", anchor_attr="vwap", family="SignalA"),
+    "SignalAShort": _StopLossPolicy(ratio_attr="stop_loss_ratio_a", anchor_attr="vwap", family="SignalA"),
+    "SignalB": _StopLossPolicy(ratio_attr="stop_loss_ratio_b", anchor_attr="rolling_low", family="SignalB"),
+}
 
 
 def check_stop_loss(
@@ -21,32 +38,29 @@ def check_stop_loss(
     pos: PositionState,
 ) -> bool:
     """Check and execute stop-loss. Returns True if stopped out."""
-    if signal_type == "SignalA":
-        if trade_mode == "short":
-            if entry_idx.vwap <= 0:
-                return False
-            if config.stop_loss_ratio_a <= 0:
-                return False
-            should_stop = price >= entry_idx.vwap / config.stop_loss_ratio_a
-        else:
-            should_stop = price <= entry_idx.vwap * config.stop_loss_ratio_a
-        if should_stop:
-            _close_position(symbol, price, bid_price, ask_price, pos, trade_mode)
-            pos.stopped_loss_symbols.add(symbol)
-            return True
-    elif signal_type == "SignalB":
-        if trade_mode == "short":
-            if entry_idx.rolling_low <= 0:
-                return False
-            if config.stop_loss_ratio_b <= 0:
-                return False
-            should_stop = price >= entry_idx.rolling_low / config.stop_loss_ratio_b
-        else:
-            should_stop = price <= entry_idx.rolling_low * config.stop_loss_ratio_b
-        if should_stop:
-            _close_position(symbol, price, bid_price, ask_price, pos, trade_mode)
-            pos.stopped_loss_symbols.add(symbol)
-            return True
+    policy = _STOP_LOSS_POLICY_MAP.get(signal_type)
+    if policy is None:
+        warnings.warn(
+            f"Unknown signal_type for stop-loss policy: {signal_type!r}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return False
+
+    anchor = float(getattr(entry_idx, policy.anchor_attr, 0.0))
+    stop_ratio = float(getattr(config, policy.ratio_attr, 0.0))
+    if anchor <= 0 or stop_ratio <= 0:
+        return False
+
+    if trade_mode == "short":
+        should_stop = price >= anchor / stop_ratio
+    else:
+        should_stop = price <= anchor * stop_ratio
+
+    if should_stop:
+        _close_position(symbol, price, bid_price, ask_price, pos, trade_mode)
+        pos.stopped_loss_symbols.add(symbol)
+        return True
     return False
 
 

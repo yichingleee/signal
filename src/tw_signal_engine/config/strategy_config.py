@@ -38,6 +38,8 @@ class SignalAShortConfig(BaseModel):
 
 class SignalBConfig(BaseModel):
     enabled: bool = False
+    # Current SignalB evaluator is long-oriented; short-side compatibility is disabled.
+    supports_short: bool = False
     vol_contract_ratio: float = 0.0
     rolling_low_duration_us: float = 0.0
     rolling_sum_short_duration_us: float = 0.0
@@ -128,6 +130,22 @@ class ExecutionConfig(BaseModel):
     commission_rate: float = 0.0
     tax_rate: float = 0.0
     slippage_bps: float = 0.0
+
+
+def validate_execution_split_invariants(config: ExecutionConfig) -> None:
+    """Validate split-related invariants used by entry sizing."""
+    if config.take_profit_splits <= 0:
+        raise ValueError(
+            f"Invalid Order.take_profit_splits={config.take_profit_splits}; must be > 0"
+        )
+    if config.reserve_limit_up_splits < 0:
+        raise ValueError(
+            f"Invalid Order.reserve_limit_up_splits={config.reserve_limit_up_splits}; must be >= 0"
+        )
+    if config.take_profit_splits + config.reserve_limit_up_splits <= 0:
+        raise ValueError(
+            "Invalid split denominator: take_profit_splits + reserve_limit_up_splits must be > 0"
+        )
 
 
 class StrategyGlobalConfig(BaseModel):

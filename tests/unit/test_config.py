@@ -2,6 +2,8 @@
 
 import tempfile
 
+import pytest
+
 from tw_signal_engine.config.load_legacy_ini import load_legacy_ini
 from tw_signal_engine.config.normalize_strategy_config import normalize_strategy_config
 
@@ -74,3 +76,13 @@ class TestNormalizeStrategyConfig:
             assert "trade_mode" in str(exc)
         else:
             raise AssertionError("Expected ValueError for invalid trade_mode")
+
+    def test_take_profit_splits_must_be_positive(self):
+        raw = {"Order": {"take_profit_splits": "0"}}
+        with pytest.raises(ValueError, match="take_profit_splits"):
+            normalize_strategy_config(raw)
+
+    def test_reserve_limit_up_splits_must_be_non_negative(self):
+        raw = {"Order": {"take_profit_splits": "2", "reserve_limit_up_splits": "-1"}}
+        with pytest.raises(ValueError, match="reserve_limit_up_splits"):
+            normalize_strategy_config(raw)

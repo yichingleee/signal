@@ -425,3 +425,105 @@ def test_trade_mode_short_keeps_legacy_signal_a_identity(monkeypatch: pytest.Mon
     assert trades == []
     assert entries == [("short", "SignalA")]
     assert ("2330", "SignalA", True) in signal_events
+
+
+def test_trade_mode_short_disables_long_only_signal_b_with_one_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from tw_signal_engine.replay import replay_session as rs
+
+    class _Provider:
+        def iterate_ticks(self):
+            yield _make_tick("2330", 93000000000, 5_000_000)
+            yield _make_tick("2330", 93100000000, 5_010_000)
+
+    class _LogWriter:
+        def __init__(self, log_dir: str, date: str) -> None:
+            self.log_dir = log_dir
+            self.date = date
+
+        def write_entry(self, *args, **kwargs) -> None:
+            return None
+
+        def write_leave(self, *args, **kwargs) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    eval_calls = {"n": 0}
+
+    def _evaluate_signal_b(*args, **kwargs):
+        eval_calls["n"] += 1
+        return False, "None"
+
+    monkeypatch.setattr(rs, "load_legacy_ini", lambda _: {})
+    cfg = NormalizedStrategyConfig()
+    cfg.strategy.trade_mode = "short"
+    cfg.signal_b.enabled = True
+    monkeypatch.setattr(rs, "normalize_strategy_config", lambda _: cfg)
+    monkeypatch.setattr(rs, "load_symbol_reference", lambda *_: {"2330": _ref("2330"), "0050": _ref("0050")})
+    monkeypatch.setattr(rs, "derive_prev_day_limit_up", lambda *_: {})
+    monkeypatch.setattr(rs, "load_group_membership", lambda *_: ([], {}, {}))
+    monkeypatch.setattr(rs, "build_replay_universe", lambda *args, **kwargs: {"2330", "0050"})
+    monkeypatch.setattr(rs, "OrderLogWriter", _LogWriter)
+    monkeypatch.setattr(rs, "_generate_reports", lambda *args, **kwargs: None)
+    monkeypatch.setattr(rs, "evaluate_signal_b", _evaluate_signal_b)
+
+    trades = run_daily_replay(
+        trade_date="20260129",
+        history=HistoryWindow(vol_cum=[], trading_val=[], source_dates=[]),
+        provider=_Provider(),
+        no_charts=True,
+    )
+
+    captured = capsys.readouterr()
+    assert trades == []
+    assert eval_calls["n"] == 0
+    assert captured.out.count(rs.SIGNAL_B_SHORT_MODE_WARNING) == 1
+
+
+def test_trade_mode_short_signal_b_short_support_flag_requires_implementation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tw_signal_engine.replay import replay_session as rs
+
+    class _Provider:
+        def iterate_ticks(self):
+            yield _make_tick("2330", 93000000000, 5_000_000)
+
+    class _LogWriter:
+        def __init__(self, log_dir: str, date: str) -> None:
+            self.log_dir = log_dir
+            self.date = date
+
+        def write_entry(self, *args, **kwargs) -> None:
+            return None
+
+        def write_leave(self, *args, **kwargs) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(rs, "load_legacy_ini", lambda _: {})
+    cfg = NormalizedStrategyConfig()
+    cfg.strategy.trade_mode = "short"
+    cfg.signal_b.enabled = True
+    cfg.signal_b.supports_short = True
+    monkeypatch.setattr(rs, "normalize_strategy_config", lambda _: cfg)
+    monkeypatch.setattr(rs, "load_symbol_reference", lambda *_: {"2330": _ref("2330"), "0050": _ref("0050")})
+    monkeypatch.setattr(rs, "derive_prev_day_limit_up", lambda *_: {})
+    monkeypatch.setattr(rs, "load_group_membership", lambda *_: ([], {}, {}))
+    monkeypatch.setattr(rs, "build_replay_universe", lambda *args, **kwargs: {"2330", "0050"})
+    monkeypatch.setattr(rs, "OrderLogWriter", _LogWriter)
+    monkeypatch.setattr(rs, "_generate_reports", lambda *args, **kwargs: None)
+
+    with pytest.raises(RuntimeError, match="SignalB short compatibility is not implemented"):
+        run_daily_replay(
+            trade_date="20260129",
+            history=HistoryWindow(vol_cum=[], trading_val=[], source_dates=[]),
+            provider=_Provider(),
+            no_charts=True,
+        )

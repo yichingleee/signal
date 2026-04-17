@@ -143,14 +143,17 @@ def on_tick_exit(
         del pos.open_trades[symbol]
 
     ot = pos.open_trades.get(symbol)
+    effective_signal_type = signal_type
     trade_mode: Literal["long", "short"]
     if ot is not None:
         trade_mode = "short" if ot.side == "short" else "long"
+        if ot.signal_type:
+            effective_signal_type = ot.signal_type
     else:
         trade_mode = "short" if qty < 0 else "long"
 
     # Stop loss
-    if check_stop_loss(config, trade_mode, symbol, price, bid_price, ask_price, signal_type, entry_idx, pos):
+    if check_stop_loss(config, trade_mode, symbol, price, bid_price, ask_price, effective_signal_type, entry_idx, pos):
         record_close("stopLoss")
         return "stopLoss"
 

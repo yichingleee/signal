@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
+
 from tw_signal_engine.config.strategy_config import ExecutionConfig
 from tw_signal_engine.execution.create_entry_trade import execute_entry
 from tw_signal_engine.execution.trade_ledger import on_tick_exit
@@ -148,6 +150,30 @@ def test_short_stop_loss_uses_mirrored_threshold_and_ask_fill() -> None:
     assert completed[0].pnl < 0
 
 
+def test_short_stop_loss_dispatches_signal_a_short_policy() -> None:
+    pos = _short_pos()
+    pos.open_trades["2330"].signal_type = "SignalAShort"
+    config = ExecutionConfig(position_cash=1000.0, exit_time_limit=140000000000, stop_loss_ratio_a=0.995)
+    completed: list = []
+
+    cause = on_tick_exit(
+        config,
+        "2330",
+        503000,
+        502000,
+        504000,
+        100000000000,
+        "SignalAShort",
+        IndexData(vwap=500000.0, day_low=480000),
+        pos,
+        completed,
+    )
+
+    assert cause == "stopLoss"
+    assert len(completed) == 1
+    assert completed[0].signal_type == "SignalAShort"
+
+
 def test_short_take_profit_trigger_and_fill() -> None:
     pos = _short_pos()
     pos.orders["2330"] = [(490000, 10.0)]
@@ -193,3 +219,53 @@ def test_short_bailout_after_tp_uses_mirrored_day_low_rule() -> None:
 
     assert cause == "bailout"
     assert len(completed) == 1
+
+
+def test_execute_entry_runtime_guard_rejects_zero_split_denominator() -> None:
+    valid = ExecutionConfig(
+        position_cash=1000.0,
+        take_profit_splits=2,
+        take_profit_pcts=[0.01, 0.02],
+    )
+    invalid = ExecutionConfig.model_construct(**{**valid.model_dump(), "take_profit_splits": 0})
+    pos = PositionState()
+
+    with pytest.raises(ValueError, match="Invalid take-profit split configuration for entry sizing"):
+        execute_entry(
+            invalid,
+            "short",
+            _tick(),
+            IndexData(vwap=100000.0, day_high=100500, day_low=99500),
+            "StrongGroup",
+            "SignalAShort",
+            pos,
+            {"2330": _ref()},
+            _StrongGroupStub(last_match_info={}),
+            0,
+            0,
+            0.0,
+        )
+
+
+def test_unknown_stop_loss_signal_type_emits_warning_instead_of_silent_pass() -> None:
+    pos = _short_pos()
+    pos.open_trades["2330"].signal_type = "SignalUnknown"
+    config = ExecutionConfig(position_cash=1000.0, exit_time_limit=140000000000)
+    completed: list = []
+
+    with pytest.warns(RuntimeWarning, match="Unknown signal_type for stop-loss policy"):
+        cause = on_tick_exit(
+            config,
+            "2330",
+            500000,
+            499000,
+            501000,
+            100000000000,
+            "SignalUnknown",
+            IndexData(vwap=500000.0, day_low=480000),
+            pos,
+            completed,
+        )
+
+    assert cause is None
+    assert completed == []

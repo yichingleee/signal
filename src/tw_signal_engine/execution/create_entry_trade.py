@@ -138,6 +138,14 @@ def execute_entry(
         actual_splits = config.take_profit_splits
     else:
         actual_splits = config.take_profit_splits + config.reserve_limit_up_splits
+    if actual_splits <= 0:
+        raise ValueError(
+            "Invalid take-profit split configuration for entry sizing: "
+            f"symbol={tick.symbol} trade_mode={trade_mode} "
+            f"take_profit_splits={config.take_profit_splits} "
+            f"reserve_limit_up_splits={config.reserve_limit_up_splits} "
+            f"actual_splits={actual_splits}"
+        )
     q = abs(signed_qty) / actual_splits
 
     limit_up_int = 0

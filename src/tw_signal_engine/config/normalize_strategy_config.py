@@ -15,6 +15,7 @@ from tw_signal_engine.config.strategy_config import (
     StrongGroupConfig,
     StrongSingleConfig,
     TradeMode,
+    validate_execution_split_invariants,
 )
 
 
@@ -95,7 +96,10 @@ def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrat
 
     # SignalB
     sb_raw = raw.get("SignalB", {})
-    signal_b = SignalBConfig(enabled=_bool(_get(sb_raw, "enabled", "false")))
+    signal_b = SignalBConfig(
+        enabled=_bool(_get(sb_raw, "enabled", "false")),
+        supports_short=_bool(_get(sb_raw, "supports_short", "false")),
+    )
     if signal_b.enabled:
         signal_b.vol_contract_ratio = float(_get(sb_raw, "vol_contract_ratio", "0"))
         signal_b.rolling_low_duration_us = _min_to_us(float(_get(sb_raw, "ROLLING_LOW_DURATION", "0")))
@@ -196,6 +200,7 @@ def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrat
         tax_rate=float(_get(order_raw, "tax_rate", "0")),
         slippage_bps=float(_get(order_raw, "slippage_bps", "0")),
     )
+    validate_execution_split_invariants(execution)
 
     # Live config (optional section)
     live_raw = raw.get("Live", {})

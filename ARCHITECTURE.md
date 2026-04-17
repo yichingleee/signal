@@ -26,6 +26,7 @@
 
 - Preferred/default operation: keep `Strategy.trade_mode=long` and enable `SignalAShort` for short-side setups in the same replay session.
 - Legacy compatibility: `Strategy.trade_mode=short` is still supported for historical short-only behavior and parity checks.
+- `SignalB` is currently long-only; in `trade_mode=short` compatibility mode it is explicitly disabled with a runtime warning.
 
 ## Live Data Integration
 

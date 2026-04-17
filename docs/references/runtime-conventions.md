@@ -63,6 +63,11 @@ uv run python -m tw_signal_engine.cli.run_batch_replay \
   - keep `Strategy.trade_mode=long`
   - set `SignalAShort.enabled=true` to run short Signal A concurrently
 - `Strategy.trade_mode=short` is a legacy compatibility mode and remains supported for historical short-only behavior
+- `SignalB` is currently long-only; in `Strategy.trade_mode=short` compatibility mode it is intentionally disabled
+- split invariants are validated at config normalization:
+  - `take_profit_splits > 0`
+  - `reserve_limit_up_splits >= 0`
+  - `take_profit_splits + reserve_limit_up_splits > 0`
 
 ### `Symbols_YYYYMMDD.csv`
 

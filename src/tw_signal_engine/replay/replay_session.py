@@ -46,6 +46,10 @@ from tw_signal_engine.state.position_state import PositionState
 from tw_signal_engine.state.signal_state import SignalAState, SignalBState
 from tw_signal_engine.state.symbol_state import IndexCalc, IndexData
 
+SIGNAL_B_SHORT_MODE_WARNING = (
+    "[WARN] SignalB is long-only and disabled in Strategy.trade_mode=short compatibility mode."
+)
+
 
 def _compute_log_dir(date: str, log_folder: str = "") -> str:
     if log_folder:
@@ -517,6 +521,7 @@ def run_daily_replay(
     signal_a_map: dict[str, SignalAState] = {}
     signal_a_short_map: dict[str, SignalAState] = {}
     signal_b_map: dict[str, SignalBState] = {}
+    signal_b_short_warning_emitted = False
     last_price: dict[str, int] = {}
     funnel = FunnelTracker()
     funnel.universe_count = len(tick_filter)
@@ -735,19 +740,29 @@ def run_daily_replay(
             is_signal_b = False
             trigger_mt_b = "None"
             if config.signal_b.enabled:
-                if symbol not in signal_b_map:
-                    sb = SignalBState(symbol=symbol)
-                    sb.rolling_low.set_duration(config.signal_b.rolling_low_duration_us)
-                    sb.rolling_sum_short.set_duration(config.signal_b.rolling_sum_short_duration_us)
-                    sb.rolling_sum_long.set_duration(config.signal_b.rolling_sum_long_duration_us)
-                    signal_b_map[symbol] = sb
-                is_signal_b, trigger_mt_b = evaluate_signal_b(
-                    signal_b_map[symbol], config.signal_b, idx,
-                    symbol, tick.match.price, tick.match.qty,
-                    tick.match_time_str, tick.match_time_us, tick.trade_at,
-                    short_match_type if compatibility_short_mode else long_match_type, f1,
-                    symbol in pos.stopped_loss_symbols,
-                )
+                if compatibility_short_mode:
+                    if config.signal_b.supports_short:
+                        raise RuntimeError(
+                            "SignalB short compatibility is not implemented. "
+                            "Keep SignalB disabled for trade_mode=short."
+                        )
+                    if not signal_b_short_warning_emitted:
+                        print(SIGNAL_B_SHORT_MODE_WARNING)
+                        signal_b_short_warning_emitted = True
+                else:
+                    if symbol not in signal_b_map:
+                        sb = SignalBState(symbol=symbol)
+                        sb.rolling_low.set_duration(config.signal_b.rolling_low_duration_us)
+                        sb.rolling_sum_short.set_duration(config.signal_b.rolling_sum_short_duration_us)
+                        sb.rolling_sum_long.set_duration(config.signal_b.rolling_sum_long_duration_us)
+                        signal_b_map[symbol] = sb
+                    is_signal_b, trigger_mt_b = evaluate_signal_b(
+                        signal_b_map[symbol], config.signal_b, idx,
+                        symbol, tick.match.price, tick.match.qty,
+                        tick.match_time_str, tick.match_time_us, tick.trade_at,
+                        long_match_type, f1,
+                        symbol in pos.stopped_loss_symbols,
+                    )
                 if hooks is not None and hooks.on_signal is not None:
                     hooks.on_signal(symbol, "SignalB", is_signal_b)
 
