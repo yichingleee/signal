@@ -8,15 +8,24 @@ import threading
 import time
 import traceback
 
+from tw_signal_engine.cli.default_paths import (
+    data_dir_help,
+    default_data_dir,
+    default_files_dir,
+    default_group_file,
+    files_dir_help,
+    group_file_help,
+)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run signal engine web server")
     parser.add_argument("--date", required=True, help="Trade date YYYYMMDD")
     parser.add_argument("--mode", choices=["live", "replay"], default="replay", help="Server mode")
     parser.add_argument("--config", default="./cfg/parameter.cfg", help="Config file path")
-    parser.add_argument("--data-dir", default="./data/", help="Data directory")
-    parser.add_argument("--files-dir", default="./files/", help="Symbol files directory")
-    parser.add_argument("--group-file", default="./files/group.csv", help="Group membership file")
+    parser.add_argument("--data-dir", default=default_data_dir(), help=data_dir_help())
+    parser.add_argument("--files-dir", default=default_files_dir(), help=files_dir_help())
+    parser.add_argument("--group-file", default=default_group_file(), help=group_file_help())
     parser.add_argument("--host", default="0.0.0.0", help="Server host")
     parser.add_argument("--port", type=int, default=8000, help="Server port")
     parser.add_argument("--snapshot-dir", default="./cache/replay/", help="Snapshot directory")

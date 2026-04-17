@@ -8,6 +8,22 @@ This repository's active implementation is the Python replay engine in `src/tw_s
 - Top-level architecture: [ARCHITECTURE.md](ARCHITECTURE.md)
 - Knowledge base home: [docs/index.md](docs/index.md)
 
+## CLI Path Defaults
+
+All Python CLI entrypoints resolve input paths in this order:
+
+1. explicit CLI flag (`--data-dir`, `--files-dir`, `--group-file`)
+2. environment variable default
+3. legacy relative fallback
+
+Environment-variable defaults:
+
+- `TW_SIGNAL_DATA_DIR` -> replay quote directory (fallback `./data/`)
+- `TW_SIGNAL_FILES_DIR` -> symbol-reference directory (fallback `./files/`)
+- `TW_SIGNAL_GROUP_FILE` -> group-membership CSV file (fallback `./files/group.csv`)
+
+Use project-local `.envrc` (direnv) or shell exports when data lives outside `exec/`.
+
 ## Code Map
 
 - `src/tw_signal_engine/cli/`: daily and batch replay entrypoints

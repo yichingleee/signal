@@ -16,6 +16,7 @@ class SignalAState:
     triggered: bool = False
     near_vwap: bool = False
     low_since_near: int = 0
+    high_since_near: int = 0
     near_vwap_time_us: int = 0
     near_vwap_time: int = 0
     near_vwap_pv_ratio: float = 0.0

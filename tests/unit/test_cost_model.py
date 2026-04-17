@@ -48,7 +48,7 @@ class TestCostModel:
         pos = _make_pos()
 
         completed: list = []
-        on_tick_exit(config, "2330", 500000, 499000, 132500000000, "SignalA", IndexData(), pos, completed)
+        on_tick_exit(config, "2330", 500000, 499000, 501000, 132500000000, "SignalA", IndexData(), pos, completed)
 
         assert len(completed) == 1
         tr = completed[0]
@@ -66,7 +66,7 @@ class TestCostModel:
         pos = _make_pos(entry_price=50.0, qty=10.0)
 
         completed: list = []
-        on_tick_exit(config, "2330", 500000, 499000, 132500000000, "SignalA", IndexData(), pos, completed)
+        on_tick_exit(config, "2330", 500000, 499000, 501000, 132500000000, "SignalA", IndexData(), pos, completed)
 
         tr = completed[0]
         assert tr.commission > 0
@@ -82,7 +82,7 @@ class TestCostModel:
         pos = _make_pos(entry_price=50.0, qty=10.0)
 
         completed: list = []
-        on_tick_exit(config, "2330", 500000, 499000, 132500000000, "SignalA", IndexData(), pos, completed)
+        on_tick_exit(config, "2330", 500000, 499000, 501000, 132500000000, "SignalA", IndexData(), pos, completed)
 
         tr = completed[0]
         assert tr.tax > 0
@@ -99,7 +99,7 @@ class TestCostModel:
         pos = _make_pos()
 
         completed: list = []
-        on_tick_exit(config, "2330", 500000, 499000, 132500000000, "SignalA", IndexData(), pos, completed)
+        on_tick_exit(config, "2330", 500000, 499000, 501000, 132500000000, "SignalA", IndexData(), pos, completed)
 
         tr = completed[0]
         assert abs(tr.net_pnl - (tr.gross_pnl - tr.commission - tr.tax)) < 0.01
@@ -140,7 +140,7 @@ class TestCostModel:
         # whatever price we pass. Since we enter at 50 and exit at a lower price,
         # the PnL depends on exit mechanism. Let me just verify costs are applied.
         completed: list = []
-        on_tick_exit(config, "2330", 490000, 489000, 132500000000, "SignalA", IndexData(), pos, completed)
+        on_tick_exit(config, "2330", 490000, 489000, 491000, 132500000000, "SignalA", IndexData(), pos, completed)
 
         tr = completed[0]
         # Even if trade is profitable at this exit price, costs should reduce net_pnl

@@ -18,7 +18,7 @@ class TestShouldEnter:
         config = ExecutionConfig()
         tick = _make_tick()
         pos = PositionState()
-        allowed, reason = should_enter(config, tick, "StrongGroup", "SignalA", pos, False, 0, 0, 0.0)
+        allowed, reason = should_enter(config, "long", tick, "StrongGroup", "SignalA", pos, False, 0, 0, 0.0)
         assert allowed is True
         assert reason is None
 
@@ -26,7 +26,7 @@ class TestShouldEnter:
         config = ExecutionConfig(entry_time_limit=100000000000)
         tick = _make_tick(time_str=130000000000)
         pos = PositionState()
-        allowed, reason = should_enter(config, tick, "StrongGroup", "SignalA", pos, False, 0, 0, 0.0)
+        allowed, reason = should_enter(config, "long", tick, "StrongGroup", "SignalA", pos, False, 0, 0, 0.0)
         assert allowed is False
         assert reason == "entry_time_limit"
 
@@ -34,7 +34,7 @@ class TestShouldEnter:
         config = ExecutionConfig(no_entry_friday=True)
         tick = _make_tick()
         pos = PositionState()
-        allowed, reason = should_enter(config, tick, "StrongGroup", "SignalA", pos, True, 0, 0, 0.0)
+        allowed, reason = should_enter(config, "long", tick, "StrongGroup", "SignalA", pos, True, 0, 0, 0.0)
         assert allowed is False
         assert reason == "no_entry_friday"
 
@@ -43,7 +43,7 @@ class TestShouldEnter:
         tick = _make_tick(symbol="2330")
         pos = PositionState()
         pos.stocks["2330"] = 1000
-        allowed, reason = should_enter(config, tick, "StrongGroup", "SignalA", pos, False, 0, 0, 0.0)
+        allowed, reason = should_enter(config, "long", tick, "StrongGroup", "SignalA", pos, False, 0, 0, 0.0)
         assert allowed is False
         assert reason == "already_holding"
 
@@ -51,16 +51,26 @@ class TestShouldEnter:
         config = ExecutionConfig(max_entry_price=40.0)
         tick = _make_tick(price=500000)
         pos = PositionState()
-        allowed, reason = should_enter(config, tick, "StrongGroup", "SignalA", pos, False, 0, 0, 0.0)
+        allowed, reason = should_enter(config, "long", tick, "StrongGroup", "SignalA", pos, False, 0, 0, 0.0)
         assert allowed is False
         assert reason == "max_entry_price"
+
+    def test_short_mode_uses_bid_for_max_entry_price(self):
+        config = ExecutionConfig(max_entry_price=49.5)
+        tick = _make_tick(price=500000)
+        tick.ask[0] = QuotePair(price=500000, qty=10)
+        tick.bid[0] = QuotePair(price=490000, qty=10)
+        pos = PositionState()
+        allowed, reason = should_enter(config, "short", tick, "StrongGroup", "SignalA", pos, False, 0, 0, 0.0)
+        assert allowed is True
+        assert reason is None
 
     def test_prev_day_limit_up_filter(self):
         config = ExecutionConfig(filter_prev_day_limit_up=True)
         tick = _make_tick()
         tick.prev_limit_up = True
         pos = PositionState()
-        allowed, reason = should_enter(config, tick, "StrongGroup", "SignalA", pos, False, 0, 0, 0.0)
+        allowed, reason = should_enter(config, "long", tick, "StrongGroup", "SignalA", pos, False, 0, 0, 0.0)
         assert allowed is False
         assert reason == "prev_day_limit_up"
 
@@ -69,7 +79,7 @@ class TestShouldEnter:
         tick = _make_tick()
         pos = PositionState()
         allowed, reason = should_enter(
-            config, tick, "StrongGroup", "SignalA", pos, False,
+            config, "long", tick, "StrongGroup", "SignalA", pos, False,
             1000000, 1020000, 0.0,
         )
         assert allowed is False
@@ -80,7 +90,7 @@ class TestShouldEnter:
         tick = _make_tick()
         tick.volatility_pause = True
         pos = PositionState()
-        allowed, reason = should_enter(config, tick, "StrongGroup", "SignalA", pos, False, 0, 0, 0.0)
+        allowed, reason = should_enter(config, "long", tick, "StrongGroup", "SignalA", pos, False, 0, 0, 0.0)
         assert allowed is False
         assert reason == "volatility_pause"
 
@@ -89,7 +99,7 @@ class TestShouldEnter:
         tick = _make_tick(symbol="2330")
         pos = PositionState()
         allowed, reason = should_enter(
-            config, tick, "StrongSingle", "SignalA", pos, False, 0, 0, 0.0,
+            config, "long", tick, "StrongSingle", "SignalA", pos, False, 0, 0, 0.0,
             strong_single_forbidden={"2330": True},
         )
         assert allowed is False
@@ -101,7 +111,7 @@ class TestShouldEnter:
         pos = PositionState()
         # 0050 at +2% total, open chg 1% => intra = 2% - 1% = 1% >= 0.5%
         allowed, reason = should_enter(
-            config, tick, "StrongGroup", "SignalA", pos, False,
+            config, "long", tick, "StrongGroup", "SignalA", pos, False,
             1000000, 1020000, 1.0,
         )
         assert allowed is False
