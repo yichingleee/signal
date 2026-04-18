@@ -592,6 +592,7 @@ def run_daily_replay(
     tick_count = 0
     last_match_time_str = config.execution.exit_time_limit
     last_minute: int | None = None
+    market_gate_exit_pending = False
 
     data_provider = provider
     if data_provider is None:
@@ -632,6 +633,11 @@ def run_daily_replay(
             )
             on_dashboard_snapshot(snapshot)
 
+    def _has_pending_overnight_exit() -> bool:
+        if not overnight_holdings:
+            return False
+        return any(holding.carry_from_date != trade_date for holding in overnight_holdings.values())
+
     for tick in data_provider.iterate_ticks():
         tick_count += 1
         last_price[tick.symbol] = tick.match.price
@@ -641,24 +647,27 @@ def run_daily_replay(
         if tick.symbol == "0050" and tick.trade_code == 1 and tick.match.price > 0:
             market_gate.on_tick(tick)
             if market_gate.market_disabled:
-                _finalize_open_positions(
-                    config,
-                    pos,
-                    last_price,
-                    entry_signal_type,
-                    entry_idx_map,
-                    completed_trades,
-                    log_writer,
-                    max(last_match_time_str, config.execution.exit_time_limit),
-                    trade_date=trade_date,
-                    hooks=hooks,
-                )
-                _generate_reports(
-                    completed_trades, log_dir, market_gate.market_open_chg_pct,
-                    funnel, trade_date, no_charts, data_dir, prev_day_lu,
-                )
-                log_writer.close()
-                return completed_trades
+                if not market_gate_exit_pending:
+                    _finalize_open_positions(
+                        config,
+                        pos,
+                        last_price,
+                        entry_signal_type,
+                        entry_idx_map,
+                        completed_trades,
+                        log_writer,
+                        max(last_match_time_str, config.execution.exit_time_limit),
+                        trade_date=trade_date,
+                        hooks=hooks,
+                    )
+                    market_gate_exit_pending = True
+                if not _has_pending_overnight_exit():
+                    _generate_reports(
+                        completed_trades, log_dir, market_gate.market_open_chg_pct,
+                        funnel, trade_date, no_charts, data_dir, prev_day_lu,
+                    )
+                    log_writer.close()
+                    return completed_trades
 
         # Skip non-trade ticks and "00XX" symbols
         if tick.trade_code != 1 or (tick.symbol[0:2] == "00"):
@@ -681,6 +690,7 @@ def run_daily_replay(
         if overnight_holdings is not None and symbol in overnight_holdings:
             holding = overnight_holdings[symbol]
             if holding.carry_from_date != trade_date:
+                entry_price_int = int(holding.entry_trade.entry_price * 10000 + 0.5)
                 entry_cashflow = -holding.entry_trade.entry_qty * holding.entry_trade.entry_price
                 overnight_pos = PositionState(
                     stocks={symbol: holding.qty},
@@ -689,8 +699,8 @@ def run_daily_replay(
                     reserve_stocks={symbol: 0.0},
                     profit_taken={symbol: False},
                     open_trades={symbol: holding.entry_trade},
-                    trade_low={symbol: int(holding.entry_trade.entry_price * 10000 + 0.5)},
-                    trade_high={symbol: int(holding.entry_trade.entry_price * 10000 + 0.5)},
+                    trade_low={symbol: holding.trade_low if holding.trade_low is not None else entry_price_int},
+                    trade_high={symbol: holding.trade_high if holding.trade_high is not None else entry_price_int},
                 )
                 overnight_cause = on_tick_exit(
                     config.execution,
@@ -723,6 +733,13 @@ def run_daily_replay(
                     if hooks is not None and hooks.on_exit is not None and completed_trades:
                         hooks.on_exit(symbol, overnight_cause, completed_trades[-1])
                 overnight_holdings.pop(symbol, None)
+                if market_gate_exit_pending and not _has_pending_overnight_exit():
+                    _generate_reports(
+                        completed_trades, log_dir, market_gate.market_open_chg_pct,
+                        funnel, trade_date, no_charts, data_dir, prev_day_lu,
+                    )
+                    log_writer.close()
+                    return completed_trades
 
         # Exit logic
         if abs(pos.stocks.get(symbol, 0)) > 0.001:
@@ -740,6 +757,7 @@ def run_daily_replay(
             if should_carry_overnight:
                 ot = pos.open_trades.get(symbol)
                 if ot is not None and overnight_map is not None:
+                    entry_price_int = int(ot.entry_price * 10000 + 0.5)
                     overnight_map[symbol] = OvernightHolding(
                         entry_trade=ot,
                         qty=pos.stocks.get(symbol, 0.0),
@@ -747,6 +765,8 @@ def run_daily_replay(
                         entry_signal_type=sig_type,
                         carry_from_date=trade_date,
                         limit_up_price=pos.limit_up_prices.get(symbol, 0),
+                        trade_low=pos.trade_low.get(symbol, entry_price_int),
+                        trade_high=pos.trade_high.get(symbol, entry_price_int),
                     )
                 pos.stocks[symbol] = 0
                 pos.orders[symbol] = []

@@ -181,6 +181,8 @@ def test_next_day_first_trade_exits_overnight_with_overnight_tax(monkeypatch: py
             entry_signal_type="SignalDayHigh",
             carry_from_date="20260129",
             limit_up_price=1_100_000,
+            trade_low=1_040_000,
+            trade_high=1_115_000,
         )
     }
 
@@ -199,7 +201,59 @@ def test_next_day_first_trade_exits_overnight_with_overnight_tax(monkeypatch: py
     assert tr.trade_date == "20260129"
     assert tr.exit_trade_date == "20260130"
     assert tr.is_overnight is True
+    assert tr.mae_price == pytest.approx(104.0)
+    assert tr.mfe_price == pytest.approx(111.5)
+    assert tr.mae_pct == pytest.approx(-1.9331, abs=1e-3)
+    assert tr.mfe_pct == pytest.approx(5.1381, abs=1e-3)
     assert tr.tax > 0
+    assert overnight == {}
+
+
+def test_market_gate_disable_still_processes_overnight_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tw_signal_engine.replay import replay_session as rs
+
+    _patch_common_dayhigh(monkeypatch, rs)
+    monkeypatch.setattr(rs, "evaluate_signal_day_high", lambda *args, **kwargs: (False, "None"))
+
+    entry = EntryTrade(
+        symbol="2330",
+        signal_type="SignalDayHigh",
+        enter_cause="StrongGroup",
+        side="long",
+        entry_time_raw=93000000000,
+        baseline=0.0,
+        entry_price=106.05,
+        entry_vwap=106.0,
+        entry_qty=1000.0,
+    )
+    overnight = {
+        "2330": OvernightHolding(
+            entry_trade=entry,
+            qty=1000.0,
+            entry_idx=IndexData(vwap=1_060_000.0),
+            entry_signal_type="SignalDayHigh",
+            carry_from_date="20260129",
+            limit_up_price=1_100_000,
+        )
+    }
+
+    provider = _Provider(
+        [
+            _tick("0050", 91500000000, 1_030_000, ask_price=1_031_000, bid_price=1_029_000),
+            _tick("2330", 91500000000, 1_090_000, ask_price=1_091_000, bid_price=1_089_000),
+        ]
+    )
+    trades = run_daily_replay(
+        trade_date="20260130",
+        history=HistoryWindow(vol_cum=[], trading_val=[], source_dates=[]),
+        provider=provider,
+        overnight_holdings=overnight,
+        no_charts=True,
+    )
+
+    assert len(trades) == 1
+    assert trades[0].final_leave_cause == "overnightExit"
+    assert trades[0].exit_trade_date == "20260130"
     assert overnight == {}
 
 

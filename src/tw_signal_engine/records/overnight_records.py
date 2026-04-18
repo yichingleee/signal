@@ -16,3 +16,5 @@ class OvernightHolding:
     entry_signal_type: str
     carry_from_date: str
     limit_up_price: int
+    trade_low: int | None = None
+    trade_high: int | None = None
