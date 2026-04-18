@@ -11,7 +11,11 @@ from tw_signal_engine.market_data.history_window import HistoryWindow
 from tw_signal_engine.records.market_event_records import MarketTick, QuotePair, TradeRecord
 from tw_signal_engine.records.reference_records import ReferenceSymbol
 from tw_signal_engine.records.trade_records import EntryTrade
-from tw_signal_engine.replay.replay_session import _finalize_open_positions, run_daily_replay
+from tw_signal_engine.replay.replay_session import (
+    _apply_limit_up_lock_flag,
+    _finalize_open_positions,
+    run_daily_replay,
+)
 from tw_signal_engine.replay.session_hooks import SessionHooks
 from tw_signal_engine.replay.session_time import fmt_time
 from tw_signal_engine.server.dashboard_snapshot import DashboardSnapshot
@@ -133,11 +137,39 @@ def _make_tick(symbol: str, time_str: int, price: int = 5_000_000) -> MarketTick
     return tick
 
 
+def test_apply_limit_up_lock_flag_requires_limit_up_and_empty_ask_queue() -> None:
+    tick = _make_tick("2330", 93000000000, 1_100_000)
+    tick.ask[0].price = 0
+    tick.bid[0].price = 1_099_000
+
+    _apply_limit_up_lock_flag(tick, _ref("2330"))
+    assert tick.is_limit_up_locked is True
+
+
+def test_apply_limit_up_lock_flag_rejects_when_ask_queue_exists() -> None:
+    tick = _make_tick("2330", 93000000000, 1_100_000)
+    tick.ask[0].price = 1_100_000
+    tick.bid[0].price = 1_099_000
+
+    _apply_limit_up_lock_flag(tick, _ref("2330"))
+    assert tick.is_limit_up_locked is False
+
+
+def test_apply_limit_up_lock_flag_rejects_non_limit_up_price() -> None:
+    tick = _make_tick("2330", 93000000000, 1_090_000)
+    tick.ask[0].price = 0
+    tick.bid[0].price = 1_089_000
+
+    _apply_limit_up_lock_flag(tick, _ref("2330"))
+    assert tick.is_limit_up_locked is False
+
+
 def test_run_daily_replay_contract_restores_live_params() -> None:
     params = inspect.signature(run_daily_replay).parameters
     assert "provider" in params
     assert "hooks" in params
     assert "on_dashboard_snapshot" in params
+    assert "overnight_holdings" in params
 
 
 def test_run_daily_replay_uses_injected_provider_and_callbacks(monkeypatch: pytest.MonkeyPatch) -> None:

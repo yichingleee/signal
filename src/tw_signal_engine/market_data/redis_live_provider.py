@@ -7,14 +7,21 @@ import queue
 import threading
 import time
 from collections.abc import Iterator
-
-import redis
+from typing import Any
 
 from tw_signal_engine.config.strategy_config import LiveConfig
 from tw_signal_engine.market_data.market_data_records import NumTracker
 from tw_signal_engine.market_data.parse_format6_replay_rows import parse_trade_line
 from tw_signal_engine.market_data.providers import MarketDataProvider
 from tw_signal_engine.records.market_event_records import MarketTick
+
+_redis: Any | None
+try:
+    import redis as _redis
+except ModuleNotFoundError:  # pragma: no cover - exercised in environments without redis installed
+    _redis = None
+
+redis = _redis
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +56,10 @@ class RedisLiveProvider(MarketDataProvider):
 
     def start_listener(self) -> None:
         """Start the Redis listener thread early (idempotent — safe to call before iterate_ticks)."""
+        if redis is None:
+            self._stop_event.set()
+            self._queue.put_nowait(None)
+            return
         if self._listener_thread is None or not self._listener_thread.is_alive():
             self._listener_thread = threading.Thread(
                 target=self._listen, daemon=True, name="redis-listener"
@@ -114,6 +125,8 @@ class RedisLiveProvider(MarketDataProvider):
 
     def _listen(self) -> None:
         """Background thread: subscribe to Redis and push ticks to queue."""
+        if redis is None:
+            raise RuntimeError("redis package is required for RedisLiveProvider listener")
         while not self._stop_event.is_set():
             try:
                 r = redis.Redis(
@@ -122,7 +135,8 @@ class RedisLiveProvider(MarketDataProvider):
                     db=self._config.redis_db,
                     socket_timeout=self._config.socket_timeout,
                 )
-                pubsub = r.pubsub()  # type: ignore[no-untyped-call]
+                r_any: Any = r
+                pubsub = r_any.pubsub()
                 channels = list(self._tick_filter)
                 if channels:
                     pubsub.subscribe(*channels)

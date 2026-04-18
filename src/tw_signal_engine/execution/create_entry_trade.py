@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from tw_signal_engine.config.strategy_config import ExecutionConfig, TradeMode
 from tw_signal_engine.execution.position_sizing import compute_entry_quantity
+from tw_signal_engine.execution.signal_policy import policy_for_signal
 from tw_signal_engine.execution.taiwan_tick_size import get_price_cond
 from tw_signal_engine.records.market_event_records import MarketTick
 from tw_signal_engine.records.reference_records import ReferenceSymbol
@@ -79,6 +80,7 @@ def execute_entry(
     near_vwap_pv_ratio: float = 0.0,
 ) -> None:
     """Execute the entry: update position state, place take-profit orders."""
+    policy = policy_for_signal(signal_type, config)
     side = "short" if trade_mode == "short" else "long"
     entry_fill_price = _entry_fill_price(tick, trade_mode)
     qty, _effective_position = compute_entry_quantity(
@@ -133,6 +135,16 @@ def execute_entry(
     pos.open_trades[tick.symbol] = ot
     pos.entered_symbols.add(tick.symbol)
 
+    limit_up_int = 0
+    if ref is not None:
+        limit_up_int = int(ref.limit_up_price * 10000 + 0.5)
+
+    if not policy.enable_take_profit:
+        pos.orders[tick.symbol] = []
+        pos.reserve_stocks[tick.symbol] = 0
+        pos.limit_up_prices[tick.symbol] = limit_up_int if trade_mode != "short" else 0
+        return
+
     # Place take-profit orders
     if trade_mode == "short":
         actual_splits = config.take_profit_splits
@@ -147,10 +159,6 @@ def execute_entry(
             f"actual_splits={actual_splits}"
         )
     q = abs(signed_qty) / actual_splits
-
-    limit_up_int = 0
-    if ref is not None:
-        limit_up_int = int(ref.limit_up_price * 10000 + 0.5)
 
     prices: list[int] = []
     if config.take_profit_pcts:

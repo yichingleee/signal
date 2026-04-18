@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Literal, cast
 
 from tw_signal_engine.config.strategy_config import (
     ExecutionConfig,
@@ -11,6 +11,7 @@ from tw_signal_engine.config.strategy_config import (
     SignalAConfig,
     SignalAShortConfig,
     SignalBConfig,
+    SignalDayHighConfig,
     StrategyGlobalConfig,
     StrongGroupConfig,
     StrongSingleConfig,
@@ -125,6 +126,19 @@ def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrat
         signal_b.buffer_zone_end_time = int(_get(sb_raw, "buffer_zone_end_time", "0"))
         signal_b.trade_zone_start_time = int(_get(sb_raw, "trade_zone_start_time", "0"))
 
+    # SignalDayHigh
+    sdh_raw = raw.get("SignalDayHigh", {})
+    signal_day_high = SignalDayHighConfig(
+        enabled=_bool(_get(sdh_raw, "enabled", "false")),
+        entry_start_time=int(_get(sdh_raw, "entry_start_time", "90500000000")),
+        entry_end_time=int(_get(sdh_raw, "entry_end_time", "100000000000")),
+        min_increase_ratio=float(_get(sdh_raw, "min_increase_ratio", "0.06")),
+        max_increase_ratio=float(_get(sdh_raw, "max_increase_ratio", "0.095")),
+        pullback_ratio=float(_get(sdh_raw, "pullback_ratio", "0.01")),
+        max_entries_per_symbol=int(_get(sdh_raw, "max_entries_per_symbol", "1")),
+        max_group_limit_up_count=int(_get(sdh_raw, "max_group_limit_up_count", "2")),
+    )
+
     # StrongGroup
     sg_raw = raw.get("StrongGroup", {})
     order_raw = raw.get("Order", {})
@@ -177,13 +191,22 @@ def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrat
     # Execution (Order section)
     tp_offsets = _get(order_raw, "take_profit_tick_offsets", "-1,0,1,2,3")
     tp_pcts_str = _get(order_raw, "take_profit_pcts", "")
+    stop_loss_mode_day_high = _get(order_raw, "stop_loss_mode_day_high", "vwap") or "vwap"
+    stop_loss_mode_day_high = stop_loss_mode_day_high.lower()
+    if stop_loss_mode_day_high != "vwap":
+        raise ValueError(
+            f"Invalid Order.stop_loss_mode_day_high: {stop_loss_mode_day_high}; expected 'vwap'"
+        )
     execution = ExecutionConfig(
         position_cash=float(_get(order_raw, "position_cash", "10000000")),
         disposition_stocks_enabled=_bool(_get(order_raw, "disposition_stocks_enabled", "false")),
         filter_prev_day_limit_up=_bool(_get(order_raw, "filter_prev_day_limit_up", "true")),
         stop_loss_ratio_a=float(_get(order_raw, "stop_loss_ratio_a", "0.997")),
         stop_loss_ratio_b=float(_get(order_raw, "stop_loss_ratio_b", "0.997")),
+        stop_loss_ratio_day_high=float(_get(order_raw, "stop_loss_ratio_day_high", "0.990")),
+        stop_loss_mode_day_high=cast(Literal["vwap"], stop_loss_mode_day_high),
         bailout_ratio=float(_get(order_raw, "bailout_ratio", "0.985")),
+        hold_overnight_on_limit_up=_bool(_get(order_raw, "hold_overnight_on_limit_up", "false")),
         max_entry_price=float(_get(order_raw, "max_entry_price", "0")),
         no_entry_friday=_bool(_get(order_raw, "no_entry_friday", "false")),
         max_0050_entry_chg=float(_get(order_raw, "max_0050_entry_chg", "0")),
@@ -198,8 +221,15 @@ def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrat
         tp_base_entry=_bool(_get(order_raw, "tp_base_entry", "true")),
         commission_rate=float(_get(order_raw, "commission_rate", "0")),
         tax_rate=float(_get(order_raw, "tax_rate", "0")),
+        day_trade_tax_rate=float(_get(order_raw, "day_trade_tax_rate", "0")),
+        overnight_tax_rate=float(_get(order_raw, "overnight_tax_rate", "0")),
         slippage_bps=float(_get(order_raw, "slippage_bps", "0")),
     )
+    tax_rate_present = "tax_rate" in order_raw
+    if tax_rate_present and "day_trade_tax_rate" not in order_raw:
+        execution.day_trade_tax_rate = execution.tax_rate
+    if tax_rate_present and "overnight_tax_rate" not in order_raw:
+        execution.overnight_tax_rate = execution.tax_rate
     validate_execution_split_invariants(execution)
 
     # Live config (optional section)
@@ -219,6 +249,7 @@ def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrat
         signal_a=signal_a,
         signal_a_short=signal_a_short,
         signal_b=signal_b,
+        signal_day_high=signal_day_high,
         strong_group=strong_group,
         strong_single=strong_single,
         execution=execution,

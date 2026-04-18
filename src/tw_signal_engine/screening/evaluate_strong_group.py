@@ -84,6 +84,11 @@ class StrongGroupEvaluator:
     def _ranking_score(self, value: float) -> float:
         return -value if self._is_short else value
 
+    def _vwap_rank_upper_bound(self) -> float:
+        if self.config.entry_max_vwap_pct_chg > 0:
+            return self.config.entry_max_vwap_pct_chg
+        return 0.085
+
     def initialize_validity(self) -> None:
         """Pre-compute which symbols are valid based on month avg trading val.
 
@@ -171,10 +176,11 @@ class StrongGroupEvaluator:
 
         # Raw VWAP rank (minimal filter)
         raw_vwap_pct = self._percentage_chg(symbol, int(idx.vwap))
+        upper_bound = self._vwap_rank_upper_bound()
         if self._is_short:
-            raw_rank_allowed = not is_limit_up_locked and raw_vwap_pct > -0.085
+            raw_rank_allowed = not is_limit_up_locked and raw_vwap_pct > -upper_bound
         else:
-            raw_rank_allowed = not is_limit_up_locked and raw_vwap_pct < 0.085
+            raw_rank_allowed = not is_limit_up_locked and raw_vwap_pct < upper_bound
         if raw_rank_allowed:
             for group in self.symbol_to_groups[symbol]:
                 if group not in self.group_member_raw_vwap_rank:
@@ -252,9 +258,9 @@ class StrongGroupEvaluator:
                 self.group_member_vwap_rank[group] = GroupRank()
 
             if self._is_short:
-                outside_trade_zone = vwap_pct <= -0.085
+                outside_trade_zone = vwap_pct <= -upper_bound
             else:
-                outside_trade_zone = vwap_pct >= 0.085
+                outside_trade_zone = vwap_pct >= upper_bound
             if is_limit_up_locked or exclude_disp or outside_trade_zone or exclude_prev_lu:
                 self.group_member_vwap_rank[group].erase(symbol)
             elif cond1 and cond2 and cond4:
