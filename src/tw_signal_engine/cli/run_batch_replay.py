@@ -46,6 +46,7 @@ def main() -> None:
 
     from tw_signal_engine.market_data.rolling_history import RollingHistoryProvider
     from tw_signal_engine.records.market_event_records import TradeRecord
+    from tw_signal_engine.records.overnight_records import OvernightHolding
     from tw_signal_engine.replay.replay_session import _merge_history_windows, run_daily_replay
     from tw_signal_engine.reporting.generate_batch_reports import generate_batch_reports
 
@@ -60,6 +61,7 @@ def main() -> None:
     tse_provider = RollingHistoryProvider("TSE", args.data_dir, use_cache=use_cache)
 
     all_trades: list[TradeRecord] = []
+    overnight_holdings: dict[str, OvernightHolding] = {}
 
     for date in dates:
         print(f"\n{'=' * 40}")
@@ -81,6 +83,7 @@ def main() -> None:
                 history=merged_history,
                 no_charts=args.no_charts,
                 cost_model_override=args.cost_model,
+                overnight_holdings=overnight_holdings,
             )
             all_trades.extend(day_trades)
         except Exception as e:

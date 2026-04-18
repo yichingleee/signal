@@ -82,4 +82,6 @@ class TradeRecord:
     net_pnl: float = 0.0
     # Context fields
     trade_date: str = ""
+    exit_trade_date: str = ""
+    is_overnight: bool = False
     entry_hour_bucket: str = ""

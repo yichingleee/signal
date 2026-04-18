@@ -10,6 +10,7 @@ from tw_signal_engine.config.load_legacy_ini import load_legacy_ini
 from tw_signal_engine.config.normalize_strategy_config import normalize_strategy_config
 from tw_signal_engine.config.strategy_config import NormalizedStrategyConfig, SignalAShortConfig, TradeMode
 from tw_signal_engine.execution.create_entry_trade import execute_entry, should_enter
+from tw_signal_engine.execution.signal_policy import policy_for_signal
 from tw_signal_engine.execution.trade_ledger import on_tick_exit
 from tw_signal_engine.market_data.file_replay_provider import FileReplayProvider
 from tw_signal_engine.market_data.history_window import HistoryWindow
@@ -17,6 +18,8 @@ from tw_signal_engine.market_data.load_history_window import load_history_window
 from tw_signal_engine.market_data.market_data_records import LinearVolumeTracker, NumTracker
 from tw_signal_engine.market_data.providers import MarketDataProvider
 from tw_signal_engine.records.market_event_records import MarketTick, TradeRecord
+from tw_signal_engine.records.overnight_records import OvernightHolding
+from tw_signal_engine.records.reference_records import ReferenceSymbol
 from tw_signal_engine.reference_data.derive_prev_day_limit_up import derive_prev_day_limit_up
 from tw_signal_engine.reference_data.load_group_membership import load_group_membership
 from tw_signal_engine.reference_data.load_symbol_reference import load_symbol_reference
@@ -42,12 +45,17 @@ from tw_signal_engine.server.dashboard_snapshot import (
 from tw_signal_engine.signals.evaluate_signal_a import evaluate_signal_a
 from tw_signal_engine.signals.evaluate_signal_a_short import evaluate_signal_a_short
 from tw_signal_engine.signals.evaluate_signal_b import evaluate_signal_b
+from tw_signal_engine.signals.evaluate_signal_day_high import evaluate_signal_day_high
 from tw_signal_engine.state.position_state import PositionState
-from tw_signal_engine.state.signal_state import SignalAState, SignalBState
+from tw_signal_engine.state.signal_state import SignalAState, SignalBState, SignalDayHighState
 from tw_signal_engine.state.symbol_state import IndexCalc, IndexData
 
 SIGNAL_B_SHORT_MODE_WARNING = (
     "[WARN] SignalB is long-only and disabled in Strategy.trade_mode=short compatibility mode."
+)
+DAYHIGH_OVERNIGHT_MAP_WARNING = (
+    "[WARN] Order.hold_overnight_on_limit_up=true but no overnight_holdings mapping was provided; "
+    "locked-limit-up DayHigh positions will still force-close in standalone replay."
 )
 
 
@@ -152,6 +160,19 @@ def _parse_cost_model(cost_str: str) -> dict[str, float]:
             key, val = part.split("=", 1)
             result[key.strip()] = float(val.strip())
     return result
+
+
+def _apply_limit_up_lock_flag(tick: MarketTick, ref: ReferenceSymbol | None) -> None:
+    """Set lock status using limit-up price plus depth-side queue evidence."""
+    tick.is_limit_up_locked = False
+    if ref is None:
+        return
+    limit_up = int(ref.limit_up_price * 10000 + 0.5)
+    if limit_up <= 0:
+        return
+    has_no_ask_queue = tick.ask[0].price <= 0
+    has_bid_queue = tick.bid[0].price > 0 or tick.total_bid_qty > 0
+    tick.is_limit_up_locked = tick.match.price >= limit_up and has_no_ask_queue and has_bid_queue
 
 
 def _format_match_time(match_time_str: int) -> str:
@@ -407,6 +428,7 @@ def run_daily_replay(
     provider: MarketDataProvider | None = None,
     hooks: SessionHooks | None = None,
     on_dashboard_snapshot: Callable[[DashboardSnapshot], None] | None = None,
+    overnight_holdings: dict[str, OvernightHolding] | None = None,
 ) -> list[TradeRecord]:
     """Run a single-day replay and return completed trades.
 
@@ -423,7 +445,14 @@ def run_daily_replay(
     if "commission" in cost_params:
         config.execution.commission_rate = cost_params["commission"]
     if "tax" in cost_params:
+        prior_tax_rate = config.execution.tax_rate
         config.execution.tax_rate = cost_params["tax"]
+        config.execution.day_trade_tax_rate = cost_params["tax"]
+        if (
+            config.execution.overnight_tax_rate <= 0
+            or abs(config.execution.overnight_tax_rate - prior_tax_rate) < 1e-12
+        ):
+            config.execution.overnight_tax_rate = cost_params["tax"]
     if "slippage" in cost_params:
         config.execution.slippage_bps = cost_params["slippage"]
     compatibility_short_mode = config.strategy.trade_mode == "short"
@@ -434,9 +463,16 @@ def run_daily_replay(
     print(f"signalA_enabled: [{config.signal_a.enabled}]")
     print(f"signalAShort_enabled: [{config.signal_a_short.enabled}]")
     print(f"signalB_enabled: [{config.signal_b.enabled}]")
+    print(f"signalDayHigh_enabled: [{config.signal_day_high.enabled}]")
     print(f"strongGroup_enabled: [{config.strong_group.enabled}]")
     print(f"strongSingle_enabled: [{config.strong_single.enabled}]")
     print(f"trade_mode: [{config.strategy.trade_mode}]")
+    if (
+        config.signal_day_high.enabled
+        and config.execution.hold_overnight_on_limit_up
+        and overnight_holdings is None
+    ):
+        print(DAYHIGH_OVERNIGHT_MAP_WARNING)
 
     # 2. Load reference data
     f1_map = load_symbol_reference(trade_date, files_dir)
@@ -508,6 +544,8 @@ def run_daily_replay(
         valid_group_symbols,
         single_valid_symbols=strong_single_valid_symbols,
     )
+    if overnight_holdings:
+        tick_filter |= set(overnight_holdings.keys())
     print(f"tickFilter: {len(tick_filter)} symbols")
 
     # 6. Setup position state
@@ -521,6 +559,7 @@ def run_daily_replay(
     signal_a_map: dict[str, SignalAState] = {}
     signal_a_short_map: dict[str, SignalAState] = {}
     signal_b_map: dict[str, SignalBState] = {}
+    signal_day_high_map: dict[str, SignalDayHighState] = {}
     signal_b_short_warning_emitted = False
     last_price: dict[str, int] = {}
     funnel = FunnelTracker()
@@ -626,6 +665,8 @@ def run_daily_replay(
             continue
 
         symbol = tick.symbol
+        f1 = f1_map.get(symbol)
+        _apply_limit_up_lock_flag(tick, f1)
 
         # Compute index
         if symbol not in index_calc_map:
@@ -636,14 +677,111 @@ def run_daily_replay(
         if hooks is not None and hooks.on_tick is not None:
             hooks.on_tick(tick, idx)
 
+        # Close carried overnight holdings on the first next-day trade.
+        if overnight_holdings is not None and symbol in overnight_holdings:
+            holding = overnight_holdings[symbol]
+            if holding.carry_from_date != trade_date:
+                entry_cashflow = -holding.entry_trade.entry_qty * holding.entry_trade.entry_price
+                overnight_pos = PositionState(
+                    stocks={symbol: holding.qty},
+                    symbol_cash={symbol: holding.entry_trade.baseline + entry_cashflow},
+                    orders={symbol: []},
+                    reserve_stocks={symbol: 0.0},
+                    profit_taken={symbol: False},
+                    open_trades={symbol: holding.entry_trade},
+                    trade_low={symbol: int(holding.entry_trade.entry_price * 10000 + 0.5)},
+                    trade_high={symbol: int(holding.entry_trade.entry_price * 10000 + 0.5)},
+                )
+                overnight_cause = on_tick_exit(
+                    config.execution,
+                    symbol,
+                    tick.match.price,
+                    tick.bid[0].price,
+                    tick.ask[0].price,
+                    tick.match_time_str,
+                    holding.entry_signal_type,
+                    holding.entry_idx,
+                    overnight_pos,
+                    completed_trades,
+                    trade_date=holding.carry_from_date,
+                    exit_trade_date=trade_date,
+                    is_overnight_exit=True,
+                    force_exit_cause="overnightExit",
+                )
+                if overnight_cause:
+                    side = completed_trades[-1].side if completed_trades else "long"
+                    log_writer.write_leave(
+                        symbol,
+                        tick.match_time_str,
+                        tick.match.price,
+                        overnight_pos.cash,
+                        overnight_pos.symbol_cash.get(symbol, 0),
+                        overnight_cause,
+                        side,
+                        0.0,
+                    )
+                    if hooks is not None and hooks.on_exit is not None and completed_trades:
+                        hooks.on_exit(symbol, overnight_cause, completed_trades[-1])
+                overnight_holdings.pop(symbol, None)
+
         # Exit logic
         if abs(pos.stocks.get(symbol, 0)) > 0.001:
             sig_type = entry_signal_type.get(symbol, "")
             eidx = entry_idx_map.get(symbol, IndexData())
-            cause = on_tick_exit(config.execution, symbol, tick.match.price, tick.bid[0].price,
-                                tick.ask[0].price,
-                                tick.match_time_str, sig_type, eidx, pos, completed_trades,
-                                trade_date=trade_date)
+            signal_policy = policy_for_signal(sig_type, config.execution)
+            overnight_map = overnight_holdings
+            should_carry_overnight = (
+                sig_type == "SignalDayHigh"
+                and signal_policy.hold_overnight_on_limit_up
+                and tick.match_time_str >= config.execution.exit_time_limit
+                and tick.is_limit_up_locked
+                and overnight_map is not None
+            )
+            if should_carry_overnight:
+                ot = pos.open_trades.get(symbol)
+                if ot is not None and overnight_map is not None:
+                    overnight_map[symbol] = OvernightHolding(
+                        entry_trade=ot,
+                        qty=pos.stocks.get(symbol, 0.0),
+                        entry_idx=eidx,
+                        entry_signal_type=sig_type,
+                        carry_from_date=trade_date,
+                        limit_up_price=pos.limit_up_prices.get(symbol, 0),
+                    )
+                pos.stocks[symbol] = 0
+                pos.orders[symbol] = []
+                pos.reserve_stocks[symbol] = 0
+                pos.profit_taken[symbol] = False
+                pos.open_trades.pop(symbol, None)
+                pos.trade_low.pop(symbol, None)
+                pos.trade_high.pop(symbol, None)
+                entry_signal_type.pop(symbol, None)
+                entry_idx_map.pop(symbol, None)
+                log_writer.write_leave(
+                    symbol,
+                    tick.match_time_str,
+                    tick.match.price,
+                    pos.cash,
+                    pos.symbol_cash.get(symbol, 0),
+                    "holdOvernight",
+                    "long",
+                    0.0,
+                )
+                _emit_minute_callbacks(tick.match_time_str)
+                continue
+            cause = on_tick_exit(
+                config.execution,
+                symbol,
+                tick.match.price,
+                tick.bid[0].price,
+                tick.ask[0].price,
+                tick.match_time_str,
+                sig_type,
+                eidx,
+                pos,
+                completed_trades,
+                trade_date=trade_date,
+            )
             if cause:
                 side = "long"
                 if completed_trades:
@@ -698,8 +836,25 @@ def run_daily_replay(
             if long_match_type != "None" or short_match_type != "None":
                 funnel.group_qualified_ticks += 1
 
+            is_signal_day_high = False
+            trigger_mt_day_high = "None"
+            if config.signal_day_high.enabled and not compatibility_short_mode:
+                if symbol not in signal_day_high_map:
+                    signal_day_high_map[symbol] = SignalDayHighState(symbol=symbol)
+                day_high_match_type = long_match_type if group else "None"
+                is_signal_day_high, trigger_mt_day_high = evaluate_signal_day_high(
+                    signal_day_high_map[symbol],
+                    config.signal_day_high,
+                    tick.match.price,
+                    tick.match_time_str,
+                    tick.match_time_us,
+                    day_high_match_type,
+                    f1,
+                )
+                if hooks is not None and hooks.on_signal is not None:
+                    hooks.on_signal(symbol, "SignalDayHigh", is_signal_day_high)
+
             # Signal A (skip if disabled)
-            f1 = f1_map.get(symbol)
             is_signal_a = False
             trigger_mt_a = "None"
             if not compatibility_short_mode and config.signal_a.enabled:
@@ -772,8 +927,12 @@ def run_daily_replay(
             selected_trade_mode: TradeMode = "long"
             selected_group_eval = strong_group
 
-            # Deterministic priority: SignalA > SignalAShort > SignalB.
-            if is_signal_a:
+            # Deterministic priority: SignalDayHigh > SignalA > SignalAShort > SignalB.
+            if is_signal_day_high:
+                selected_signal_type = "SignalDayHigh"
+                selected_match_type = trigger_mt_day_high
+                selected_trade_mode = "long"
+            elif is_signal_a:
                 selected_signal_type = "SignalA"
                 selected_match_type = trigger_mt_a
                 selected_trade_mode = "short" if compatibility_short_mode else "long"
@@ -793,17 +952,30 @@ def run_daily_replay(
             if selected_signal_type is not None:
                 funnel.signal_triggered += 1
 
-                allowed, block_reason = should_enter(
-                    config.execution,
-                    selected_trade_mode,
-                    tick,
-                    selected_match_type,
-                    selected_signal_type,
-                    pos,
-                    is_friday,
-                    p0050_prev, market_gate.p0050_latest, market_gate.market_open_chg_pct,
-                    strong_single.forbidden if strong_single_enabled_for_entry else None,
-                )
+                allowed = True
+                block_reason: str | None = None
+                if selected_signal_type == "SignalDayHigh":
+                    mi = strong_group.last_match_info.get(symbol)
+                    group_name = mi.group_name if mi is not None else ""
+                    if (
+                        group_name
+                        and strong_group.get_group_limit_up_count(group_name)
+                        >= config.signal_day_high.max_group_limit_up_count
+                    ):
+                        allowed = False
+                        block_reason = "day_high_group_limit_up_count"
+                if allowed:
+                    allowed, block_reason = should_enter(
+                        config.execution,
+                        selected_trade_mode,
+                        tick,
+                        selected_match_type,
+                        selected_signal_type,
+                        pos,
+                        is_friday,
+                        p0050_prev, market_gate.p0050_latest, market_gate.market_open_chg_pct,
+                        strong_single.forbidden if strong_single_enabled_for_entry else None,
+                    )
                 if allowed:
                     execute_entry(
                         config.execution,

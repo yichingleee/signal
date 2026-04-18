@@ -62,6 +62,8 @@ class TestNormalizeStrategyConfig:
         config = normalize_strategy_config(raw)
         assert config.execution.position_cash == 5_000_000.0
         assert config.execution.stop_loss_ratio_a == 0.995
+        assert config.execution.stop_loss_ratio_day_high == 0.99
+        assert config.execution.stop_loss_mode_day_high == "vwap"
 
     def test_trade_mode_short(self):
         raw = {"Strategy": {"trade_mode": "short"}}
@@ -86,3 +88,51 @@ class TestNormalizeStrategyConfig:
         raw = {"Order": {"take_profit_splits": "2", "reserve_limit_up_splits": "-1"}}
         with pytest.raises(ValueError, match="reserve_limit_up_splits"):
             normalize_strategy_config(raw)
+
+    def test_signal_day_high_section_normalizes(self):
+        raw = {
+            "SignalDayHigh": {
+                "enabled": "true",
+                "entry_start_time": "90500000000",
+                "entry_end_time": "100000000000",
+                "min_increase_ratio": "0.06",
+                "max_increase_ratio": "0.095",
+                "pullback_ratio": "0.01",
+                "max_entries_per_symbol": "1",
+                "max_group_limit_up_count": "2",
+            },
+            "Order": {
+                "stop_loss_ratio_day_high": "0.990",
+                "stop_loss_mode_day_high": "vwap",
+                "hold_overnight_on_limit_up": "true",
+                "day_trade_tax_rate": "0.0015",
+                "overnight_tax_rate": "0.003",
+            },
+        }
+        config = normalize_strategy_config(raw)
+        assert config.signal_day_high.enabled is True
+        assert config.signal_day_high.min_increase_ratio == 0.06
+        assert config.execution.stop_loss_ratio_day_high == 0.99
+        assert config.execution.hold_overnight_on_limit_up is True
+        assert config.execution.day_trade_tax_rate == 0.0015
+        assert config.execution.overnight_tax_rate == 0.003
+
+    def test_tax_rate_backfills_day_and_overnight_when_new_fields_omitted(self):
+        raw = {"Order": {"tax_rate": "0.0015"}}
+        config = normalize_strategy_config(raw)
+        assert config.execution.tax_rate == 0.0015
+        assert config.execution.day_trade_tax_rate == 0.0015
+        assert config.execution.overnight_tax_rate == 0.0015
+
+    def test_tax_rate_does_not_override_explicit_overnight_or_day_trade_rates(self):
+        raw = {
+            "Order": {
+                "tax_rate": "0.0015",
+                "day_trade_tax_rate": "0.0010",
+                "overnight_tax_rate": "0.0020",
+            }
+        }
+        config = normalize_strategy_config(raw)
+        assert config.execution.tax_rate == 0.0015
+        assert config.execution.day_trade_tax_rate == 0.0010
+        assert config.execution.overnight_tax_rate == 0.0020

@@ -61,6 +61,17 @@ class SignalBConfig(BaseModel):
     trade_zone_start_time: int = 0
 
 
+class SignalDayHighConfig(BaseModel):
+    enabled: bool = False
+    entry_start_time: int = 90500000000
+    entry_end_time: int = 100000000000
+    min_increase_ratio: float = 0.06
+    max_increase_ratio: float = 0.095
+    pullback_ratio: float = 0.01
+    max_entries_per_symbol: int = 1
+    max_group_limit_up_count: int = 2
+
+
 class StrongGroupConfig(BaseModel):
     enabled: bool = False
     member_min_month_trading_val: int = 0
@@ -113,7 +124,10 @@ class ExecutionConfig(BaseModel):
     filter_prev_day_limit_up: bool = True
     stop_loss_ratio_a: float = 0.997
     stop_loss_ratio_b: float = 0.997
+    stop_loss_ratio_day_high: float = 0.990
+    stop_loss_mode_day_high: Literal["vwap"] = "vwap"
     bailout_ratio: float = 0.985
+    hold_overnight_on_limit_up: bool = False
     max_entry_price: float = 0.0
     no_entry_friday: bool = False
     max_0050_entry_chg: float = 0.0
@@ -129,6 +143,8 @@ class ExecutionConfig(BaseModel):
     # Cost model (default 0 = no costs)
     commission_rate: float = 0.0
     tax_rate: float = 0.0
+    day_trade_tax_rate: float = 0.0
+    overnight_tax_rate: float = 0.0
     slippage_bps: float = 0.0
 
 
@@ -173,6 +189,7 @@ class NormalizedStrategyConfig(BaseModel):
     signal_a: SignalAConfig = SignalAConfig()
     signal_a_short: SignalAShortConfig = SignalAShortConfig()
     signal_b: SignalBConfig = SignalBConfig()
+    signal_day_high: SignalDayHighConfig = SignalDayHighConfig()
     strong_group: StrongGroupConfig = StrongGroupConfig()
     strong_single: StrongSingleConfig = StrongSingleConfig()
     execution: ExecutionConfig = ExecutionConfig()

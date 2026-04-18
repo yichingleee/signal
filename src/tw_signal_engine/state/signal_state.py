@@ -42,3 +42,17 @@ class SignalBState:
     trade_zone_trigger_price: int = -1
     trade_zone_start_time: int = -1
     enter_market: bool = False
+
+
+@dataclass
+class SignalDayHighState:
+    """Per-symbol state for SignalDayHigh."""
+
+    symbol: str = ""
+    triggered: bool = False
+    established_high: int = 0
+    established_high_time: int = 0
+    pullback_confirmed: bool = False
+    pullback_low: int = 0
+    pullback_time: int = 0
+    entries: int = 0
