@@ -3,7 +3,7 @@
 This document describes the as-built architecture for live market data integration. It covers the provider abstraction, all provider implementations, session hooks, and how to test each component.
 
 **Related docs**:
-- Pre-implementation research: [live-data-integration-research.md](live-data-integration-research.md)
+- Archived pre-implementation research: [../references/legacy/research/live-data-integration-research.md](../references/legacy/research/live-data-integration-research.md)
 - Execution plan: [../exec-plans/completed/live-data-integration-execution-plan.md](../exec-plans/completed/live-data-integration-execution-plan.md)
 - Dashboard (the main consumer of live state): [dashboard-architecture.md](dashboard-architecture.md)
 

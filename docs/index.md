@@ -16,6 +16,7 @@ This `docs/` tree is the repository's system of record for durable project knowl
 
 ## Execution Plans
 
+- [docs/exec-plans/index.md](exec-plans/index.md): execution-plan standards, active plans, completed plans, and open debt
 - [docs/exec-plans/active/index.md](exec-plans/active/index.md): active in-repo plans
 - [docs/exec-plans/completed/index.md](exec-plans/completed/index.md): completed plan summaries
 - [docs/exec-plans/tech-debt-tracker.md](exec-plans/tech-debt-tracker.md): known follow-up items

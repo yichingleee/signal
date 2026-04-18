@@ -2,7 +2,7 @@
 
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
-This document follows the repository execution-plan standard in `docs/exec-plans/PLAN.md`. If implementation discovers new facts, update this file first or in the same patch as the code change so that a future contributor can restart from this plan alone.
+This document follows the repository execution-plan standard in `docs/references/exec-plan-standard.md`. If implementation discovers new facts, update this file first or in the same patch as the code change so that a future contributor can restart from this plan alone.
 
 ## Purpose / Big Picture
 
@@ -38,8 +38,8 @@ The observable outcome is a DayHigh-only replay configuration that produces `Sig
 - Observation: Take-profit cannot be disabled globally by setting `take_profit_splits=0`.
   Evidence: `validate_execution_split_invariants()` in `src/tw_signal_engine/config/strategy_config.py` rejects `take_profit_splits <= 0`, and `execute_entry()` in `src/tw_signal_engine/execution/create_entry_trade.py` always creates `pos.orders[tick.symbol]` after entry.
 
-- Observation: The full `uv run pytest tests -q` command still fails in this workspace for reasons outside the DayHigh implementation: missing golden parity artifacts and a local root-level `docs/exec-plans/PLAN.md` that violates the docs partition test.
-  Evidence: `tests/golden/test_replay_parity.py` reports missing `artifacts/baseline/cpp/.../report_trades.csv`; `tests/unit/test_docs_knowledge_base.py::test_exec_plan_docs_are_partitioned` fails on `docs/exec-plans/PLAN.md`.
+- Observation: At implementation time, the full `uv run pytest tests -q` command failed in this workspace for reasons outside the DayHigh implementation.
+  Evidence: `tests/golden/test_replay_parity.py` reported missing `artifacts/baseline/cpp/.../report_trades.csv`. The docs partition failure has since been resolved by moving the plan standard to `docs/references/exec-plan-standard.md`.
 
 ## Decision Log
 

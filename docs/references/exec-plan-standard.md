@@ -1,20 +1,20 @@
 ---
 title: ExecPlan Authoring Standard
 status: active
-owner: stocknextdayfilter-maintainers
+owner: tw_signal_engine-maintainers
 last_reviewed: 2026-02-22
 canonical_language: en
 source_of_truth: canonical
-applies_to: StockNextDayFilter
+applies_to: tw_signal_engine
 ---
 
 # Codex Execution Plans (ExecPlans):
 
 This document describes the requirements for an execution plan ("ExecPlan"), a design document that a coding agent can follow to deliver a working feature or system change. Treat the reader as a complete beginner to this repository: they have only the current working tree and the single ExecPlan file you provide. There is no memory of prior plans and no external context.
 
-## How to use ExecPlans and `docs/exec-plans/PLANS.md`
+## How to use ExecPlans and this standard
 
-When authoring an executable specification (ExecPlan), follow `docs/exec-plans/PLANS.md` _to the letter_. If it is not in your context, refresh your memory by reading the entire `docs/exec-plans/PLANS.md` file. Be thorough in reading (and re-reading) source material to produce an accurate specification. When creating a spec, start from the skeleton and flesh it out as you do your research.
+When authoring an executable specification (ExecPlan), follow this document _to the letter_. Be thorough in reading (and re-reading) source material to produce an accurate specification. When creating a spec, start from the skeleton and flesh it out as you do your research.
 
 When implementing an executable specification (ExecPlan), do not prompt the user for "next steps"; simply proceed to the next milestone. Keep all sections up to date, add or split entries in the list at every stopping point to affirmatively state the progress made and next steps. Resolve ambiguities autonomously, and commit frequently.
 
@@ -86,7 +86,7 @@ Prefer additive code changes followed by subtractions that keep tests passing. P
 
     This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
-    If `docs/exec-plans/PLANS.md` is checked into the repo, reference that repository-relative path here and note that this document must be maintained in accordance with `docs/exec-plans/PLANS.md`.
+    Reference this repository-relative path in plan docs: `docs/references/exec-plan-standard.md`.
 
     ## Purpose / Big Picture
 

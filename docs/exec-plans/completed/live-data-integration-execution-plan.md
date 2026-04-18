@@ -1,7 +1,7 @@
 # Live Data Integration — Execution Plan
 
 **Branch**: `feat/live-data-integration`
-**Based on**: [Research doc](../../design-docs/live-data-integration-research.md)
+**Based on**: [Research doc](../../references/legacy/research/live-data-integration-research.md)
 **Date**: 2026-03-24
 
 ---

@@ -3,7 +3,7 @@
 ## Purpose
 
 This note evaluates how to implement the draft Day High Breakout strategy from
-`docs/product-specs/dayhigh-strategy-spec-draft.md` in the current Python replay
+`docs/references/legacy/strategy-drafts/dayhigh-strategy-spec-draft.md` in the current Python replay
 engine under `src/tw_signal_engine/`.
 
 The strategy is compatible with the repository's current architecture, but it is
