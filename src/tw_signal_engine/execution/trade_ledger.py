@@ -6,9 +6,10 @@ from typing import Literal
 
 from tw_signal_engine.config.strategy_config import ExecutionConfig
 from tw_signal_engine.execution.apply_bailout_exit import check_bailout
-from tw_signal_engine.execution.apply_stop_loss_exit import check_stop_loss
+from tw_signal_engine.execution.apply_stop_loss_exit import _close_position, check_stop_loss
 from tw_signal_engine.execution.apply_take_profit_plan import check_take_profit
 from tw_signal_engine.execution.apply_time_exit import check_time_exit
+from tw_signal_engine.execution.signal_policy import policy_for_signal
 from tw_signal_engine.records.market_event_records import TradeRecord
 from tw_signal_engine.state.position_state import PositionState
 from tw_signal_engine.state.symbol_state import IndexData
@@ -42,6 +43,9 @@ def on_tick_exit(
     pos: PositionState,
     completed_trades: list[TradeRecord],
     trade_date: str = "",
+    exit_trade_date: str = "",
+    is_overnight_exit: bool = False,
+    force_exit_cause: str | None = None,
 ) -> str | None:
     """Process exit logic for one tick. Returns leave cause or None."""
     qty = pos.stocks.get(symbol, 0)
@@ -79,7 +83,16 @@ def on_tick_exit(
         entry_notional = ot.entry_price * ot.entry_qty
         exit_notional = abs(pos.symbol_cash.get(symbol, 0))
         commission_val = (abs(entry_notional) + exit_notional) * config.commission_rate
-        tax_val = exit_notional * config.tax_rate
+        is_overnight = is_overnight_exit or cause == "overnightExit"
+        if is_overnight:
+            tax_rate = (
+                config.overnight_tax_rate
+                if config.overnight_tax_rate > 0
+                else (config.day_trade_tax_rate if config.day_trade_tax_rate > 0 else config.tax_rate)
+            )
+        else:
+            tax_rate = config.day_trade_tax_rate if config.day_trade_tax_rate > 0 else config.tax_rate
+        tax_val = exit_notional * tax_rate
         slippage_val = (abs(entry_notional) + exit_notional) * config.slippage_bps / 10000.0
         net_pnl = gross_pnl - commission_val - tax_val - slippage_val
 
@@ -134,6 +147,8 @@ def on_tick_exit(
             slippage=slippage_val,
             net_pnl=net_pnl,
             trade_date=trade_date,
+            exit_trade_date=exit_trade_date or trade_date,
+            is_overnight=is_overnight,
             entry_hour_bucket=_compute_hour_bucket(ot.entry_time_raw),
         )
         completed_trades.append(tr)
@@ -151,6 +166,12 @@ def on_tick_exit(
             effective_signal_type = ot.signal_type
     else:
         trade_mode = "short" if qty < 0 else "long"
+    policy = policy_for_signal(effective_signal_type, config)
+
+    if force_exit_cause:
+        _close_position(symbol, price, bid_price, ask_price, pos, trade_mode)
+        record_close(force_exit_cause)
+        return force_exit_cause
 
     # Stop loss
     if check_stop_loss(config, trade_mode, symbol, price, bid_price, ask_price, effective_signal_type, entry_idx, pos):
@@ -164,18 +185,20 @@ def on_tick_exit(
         return cause
 
     # Take profit
-    if check_take_profit(symbol, price, trade_mode, pos, match_time_str):
-        if symbol in pos.open_trades:
-            pos.open_trades[symbol].had_take_profit = True
-        reserve = pos.reserve_stocks.get(symbol, 0)
-        if abs(pos.stocks.get(symbol, 0)) <= 0.001 and reserve <= 0.001:
-            pos.stocks[symbol] = 0
-            record_close("takeProfit")
-            return "takeProfit"
+    if policy.enable_take_profit:
+        if check_take_profit(symbol, price, trade_mode, pos, match_time_str):
+            if symbol in pos.open_trades:
+                pos.open_trades[symbol].had_take_profit = True
+            reserve = pos.reserve_stocks.get(symbol, 0)
+            if abs(pos.stocks.get(symbol, 0)) <= 0.001 and reserve <= 0.001:
+                pos.stocks[symbol] = 0
+                record_close("takeProfit")
+                return "takeProfit"
 
     # Bailout
-    if check_bailout(config, trade_mode, symbol, price, bid_price, ask_price, entry_idx, pos):
-        record_close("bailout")
-        return "bailout"
+    if policy.enable_bailout:
+        if check_bailout(config, trade_mode, symbol, price, bid_price, ask_price, entry_idx, pos):
+            record_close("bailout")
+            return "bailout"
 
     return None

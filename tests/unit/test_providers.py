@@ -6,6 +6,7 @@ from tw_signal_engine.config.strategy_config import LiveConfig
 from tw_signal_engine.market_data.backfill_provider import BackfillThenLiveProvider
 from tw_signal_engine.market_data.file_replay_provider import FileReplayProvider
 from tw_signal_engine.market_data.paced_replay_provider import PacedReplayProvider
+from tw_signal_engine.market_data.parse_format6_replay_rows import parse_trade_line
 from tw_signal_engine.market_data.providers import MarketDataProvider
 from tw_signal_engine.market_data.redis_live_provider import RedisLiveProvider
 from tw_signal_engine.records.market_event_records import MarketTick, QuotePair
@@ -199,3 +200,25 @@ class TestBackfillThenLiveProvider:
         assert len(result) == 3
         times = [t.match_time_str for t in result]
         assert times == [90000000000, 91000000000, 92000000000]
+
+
+class TestFormat6DepthParsing:
+    def test_depth_parses_total_bid_ask_qty(self):
+        trade = "Trade,2330,90000000000,0,5000000,100"
+        depth = "Depth,2330,90000000000,BID:2,4999000,300,4998000,200,ASK:2,5001000,150,5002000,50"
+
+        tick = parse_trade_line(trade, depth, "TSE")
+        assert tick is not None
+        assert tick.bid[0].price == 4999000
+        assert tick.ask[0].price == 5001000
+        assert tick.total_bid_qty == 500
+        assert tick.total_ask_qty == 200
+
+    def test_depth_missing_ask_queue_keeps_ask_total_zero(self):
+        trade = "Trade,2330,90000000000,0,5000000,100"
+        depth = "Depth,2330,90000000000,BID:1,4999000,300,ASK:0"
+
+        tick = parse_trade_line(trade, depth, "TSE")
+        assert tick is not None
+        assert tick.ask[0].price == 0
+        assert tick.total_ask_qty == 0

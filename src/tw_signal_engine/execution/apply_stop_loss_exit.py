@@ -23,6 +23,7 @@ _STOP_LOSS_POLICY_MAP: dict[str, _StopLossPolicy] = {
     "SignalA": _StopLossPolicy(ratio_attr="stop_loss_ratio_a", anchor_attr="vwap", family="SignalA"),
     "SignalAShort": _StopLossPolicy(ratio_attr="stop_loss_ratio_a", anchor_attr="vwap", family="SignalA"),
     "SignalB": _StopLossPolicy(ratio_attr="stop_loss_ratio_b", anchor_attr="rolling_low", family="SignalB"),
+    "SignalDayHigh": _StopLossPolicy(ratio_attr="stop_loss_ratio_day_high", anchor_attr="vwap", family="SignalDayHigh"),
 }
 
 

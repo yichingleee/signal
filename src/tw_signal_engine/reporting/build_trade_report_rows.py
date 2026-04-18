@@ -31,7 +31,7 @@ def write_trade_report(
             "TimeToFirstTP", "TPSlicesFilled",
             "GrossPnL", "Commission", "Tax", "Slippage", "NetPnL",
             "TPPnL", "ResidualPnL",
-            "TradeDate", "EntryHourBucket",
+            "TradeDate", "ExitTradeDate", "IsOvernight", "EntryHourBucket",
         ])
         for t in completed_trades:
             dur = duration_sec(t.entry_time_raw, t.exit_time_raw)
@@ -57,6 +57,6 @@ def write_trade_report(
                 str(t.time_to_first_tp_sec), str(t.tp_slices_filled),
                 f"{t.gross_pnl:.0f}", f"{t.commission:.0f}", f"{t.tax:.0f}", f"{t.slippage:.0f}", f"{t.net_pnl:.0f}",
                 f"{t.tp_pnl:.0f}", f"{t.residual_pnl:.0f}",
-                t.trade_date, t.entry_hour_bucket,
+                t.trade_date, t.exit_trade_date, 1 if t.is_overnight else 0, t.entry_hour_bucket,
             ])
     print(f"[Report] {path}")

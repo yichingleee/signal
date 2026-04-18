@@ -23,7 +23,7 @@ def _ref(symbol: str) -> ReferenceSymbol:
     )
 
 
-def _config() -> StrongGroupConfig:
+def _config(entry_max_vwap_pct_chg: float = 0.0) -> StrongGroupConfig:
     return StrongGroupConfig(
         enabled=True,
         member_min_month_trading_val=0,
@@ -41,14 +41,14 @@ def _config() -> StrongGroupConfig:
         member_cond2_enabled=False,
         member_cond4_enabled=False,
         entry_min_vwap_pct_chg=0.0,
-        entry_max_vwap_pct_chg=0.0,
+        entry_max_vwap_pct_chg=entry_max_vwap_pct_chg,
         require_raw_m1=True,
         block_disposition_entry=False,
         entry_max_vol_ratio=0.0,
     )
 
 
-def _make_eval(trade_mode: str) -> StrongGroupEvaluator:
+def _make_eval(trade_mode: str, entry_max_vwap_pct_chg: float = 0.0) -> StrongGroupEvaluator:
     symbol_to_groups = {"AAA": ["G1"], "BBB": ["G1"]}
     group_members = {"G1": {"AAA", "BBB"}}
     vol_cum = [LinearVolumeTracker()]
@@ -56,7 +56,7 @@ def _make_eval(trade_mode: str) -> StrongGroupEvaluator:
     f1_map = {"AAA": _ref("AAA"), "BBB": _ref("BBB")}
 
     ev = StrongGroupEvaluator(
-        config=_config(),
+        config=_config(entry_max_vwap_pct_chg=entry_max_vwap_pct_chg),
         symbol_to_groups=symbol_to_groups,
         group_members=group_members,
         vol_cum=vol_cum,
@@ -91,3 +91,23 @@ def test_long_mode_still_selects_strongest_member() -> None:
     assert got_b is True
     info = ev.last_match_info["BBB"]
     assert info.raw_member_rank == 1
+
+
+def test_long_mode_can_rank_between_85_and_95_pct_when_upper_bound_is_configured() -> None:
+    ev = _make_eval("long", entry_max_vwap_pct_chg=0.095)
+
+    ev.on_tick(IndexData(vwap=1_080_000.0), "BBB", 1_080_000, 100, 91000000000, 91000000000, False)
+    got_a = ev.on_tick(IndexData(vwap=1_090_000.0), "AAA", 1_090_000, 100, 91010000000, 91010000000, False)
+
+    assert got_a is True
+    info = ev.last_match_info["AAA"]
+    assert info.raw_member_rank == 1
+
+
+def test_long_mode_keeps_legacy_85_pct_cutoff_by_default() -> None:
+    ev = _make_eval("long")
+
+    ev.on_tick(IndexData(vwap=1_080_000.0), "BBB", 1_080_000, 100, 91000000000, 91000000000, False)
+    got_a = ev.on_tick(IndexData(vwap=1_090_000.0), "AAA", 1_090_000, 100, 91010000000, 91010000000, False)
+
+    assert got_a is False

@@ -16,62 +16,46 @@ def _convert_raw_time_to_us(raw_time: int) -> int:
     return (hours * 3600 + minutes * 60 + seconds) * 1_000_000 + micros
 
 
-def _get_best_prices(depth_line: str) -> tuple[int, int]:
-    """Extract best bid/ask prices from depth line.
+def _extract_depth_side(depth_line: str, side: str) -> tuple[int, int]:
+    """Extract (best_price, total_qty) for BID/ASK side from a depth line."""
+    tag = f"{side}:"
+    side_pos = depth_line.find(tag)
+    if side_pos == -1:
+        return 0, 0
 
-    Uses index-based scanning instead of repeated find/split/string building.
-    Format: ...BID:COUNT,PRICE1,QTY1,...ASK:COUNT,PRICE1,QTY1,...
-    """
-    bid_price = 0
-    ask_price = 0
+    start = side_pos + len(tag)
+    ask_pos = depth_line.find("ASK:", start) if side == "BID" else -1
+    end = ask_pos if ask_pos != -1 else len(depth_line)
+    tokens = [token.strip() for token in depth_line[start:end].split(",") if token.strip()]
+    if not tokens:
+        return 0, 0
 
-    bid_pos = depth_line.find("BID:")
-    if bid_pos != -1:
-        bid_price = _extract_first_price_after_tag(depth_line, bid_pos + 4)
-
-    ask_pos = depth_line.find("ASK:")
-    if ask_pos != -1:
-        ask_price = _extract_first_price_after_tag(depth_line, ask_pos + 4)
-
-    return bid_price, ask_price
-
-
-def _extract_first_price_after_tag(line: str, start: int) -> int:
-    """Extract the first price after a BID:/ASK: tag.
-
-    Format after tag: COUNT,PRICE,QTY,...
-    If COUNT > 0, returns PRICE as int.
-    """
-    # Find the comma after COUNT
-    comma = line.find(",", start)
-    if comma == -1:
-        return 0
-
-    # Parse COUNT
-    count_str = line[start:comma]
     try:
-        count = int(count_str)
+        count = int(tokens[0])
     except ValueError:
-        return 0
-
+        return 0, 0
     if count <= 0:
-        return 0
+        return 0, 0
 
-    # Price starts right after the comma
-    price_start = comma + 1
-    # Scan digits
-    price_end = price_start
-    line_len = len(line)
-    while price_end < line_len:
-        c = line[price_end]
-        if c < "0" or c > "9":
+    best_price = 0
+    total_qty = 0
+    for level in range(count):
+        price_idx = 1 + level * 2
+        qty_idx = price_idx + 1
+        if price_idx >= len(tokens):
             break
-        price_end += 1
-
-    if price_end == price_start:
-        return 0
-
-    return int(line[price_start:price_end])
+        try:
+            price = int(tokens[price_idx])
+        except ValueError:
+            break
+        if level == 0:
+            best_price = price
+        if qty_idx < len(tokens):
+            try:
+                total_qty += int(tokens[qty_idx])
+            except ValueError:
+                pass
+    return best_price, total_qty
 
 
 def parse_trade_line(trade_line: str, depth_line: str, market: str) -> MarketTick | None:
@@ -110,12 +94,15 @@ def parse_trade_line(trade_line: str, depth_line: str, market: str) -> MarketTic
 
     # Parse depth if available
     if depth_line:
-        bid_price, ask_price = _get_best_prices(depth_line)
+        bid_price, bid_qty_total = _extract_depth_side(depth_line, "BID")
+        ask_price, ask_qty_total = _extract_depth_side(depth_line, "ASK")
         tick.bid[0].price = bid_price
         tick.ask[0].price = ask_price
-        if price == bid_price:
+        tick.total_bid_qty = bid_qty_total
+        tick.total_ask_qty = ask_qty_total
+        if bid_price > 0 and price == bid_price:
             tick.trade_at = 1
-        else:
+        elif ask_price > 0 and price == ask_price:
             tick.trade_at = 2
 
     return tick
