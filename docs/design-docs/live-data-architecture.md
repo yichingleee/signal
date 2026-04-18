@@ -51,7 +51,7 @@ This is a pure dependency-injection pattern — the caller decides the data sour
 
 Wraps the existing `merge_market_streams()` function. Reads OTC + TSE archive files (`OTCQuote.YYYYMMDD`, `TSEQuote.YYYYMMDD`), merges them by `match_time_str`, and yields `MarketTick` objects. No timing delays — runs as fast as the CPU allows.
 
-**When to use**: Batch backtesting, golden parity tests, generating Parquet snapshots for replay mode.
+**When to use**: Batch backtesting, replay investigations, generating Parquet snapshots for replay mode.
 
 ### 2.2 PacedReplayProvider
 

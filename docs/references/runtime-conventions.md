@@ -171,7 +171,6 @@ Per-symbol timeline charts annotate:
 
 ```bash
 uv run pytest tests -q
-uv run pytest tests/golden -m golden -q
 uv run ruff check src tests
 uv run mypy src
 ```

@@ -11,7 +11,6 @@
 - group CSV from `--group-file` (or `TW_SIGNAL_GROUP_FILE` / `./files/group.csv` fallback)
 - `TSEQuote.YYYYMMDD` and `OTCQuote.YYYYMMDD` under `--data-dir`
   (or `TW_SIGNAL_DATA_DIR` / `./data/` fallback)
-- `artifacts/baseline/`: archived golden parity outputs, used by tests rather than by the runtime
 
 Detailed file conventions live in [docs/references/runtime-conventions.md](../references/runtime-conventions.md).
 
@@ -151,5 +150,5 @@ The runtime has several ordering rules that matter for correctness:
 - Prices are stored internally as integer `price * 10000`.
 - `match_time_str` is the canonical wall-clock tick timestamp.
 - `match_time_us` is the canonical rolling-window timestamp.
-- The Python implementation preserves some parity-sensitive C++ behaviors; see [docs/references/parity-status.md](../references/parity-status.md).
+- The Python implementation preserves some parity-sensitive C++ behaviors; see the archived notes in [docs/references/parity-status.md](../references/parity-status.md).
 - The main orchestration still lives in one file, `replay/replay_session.py`; the follow-up split is tracked in [docs/exec-plans/tech-debt-tracker.md](../exec-plans/tech-debt-tracker.md).

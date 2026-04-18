@@ -9,4 +9,4 @@ Cross-links:
 
 - Architecture: [docs/design-docs/runtime-architecture.md](../design-docs/runtime-architecture.md)
 - Runtime conventions: [docs/references/runtime-conventions.md](../references/runtime-conventions.md)
-- Parity status: [docs/references/parity-status.md](../references/parity-status.md)
+- Archived parity notes: [docs/references/parity-status.md](../references/parity-status.md)

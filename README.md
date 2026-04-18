@@ -88,13 +88,12 @@ uv sync --extra live
 - Current runtime architecture: [docs/design-docs/runtime-architecture.md](docs/design-docs/runtime-architecture.md)
 - Current committed strategy behavior: [docs/product-specs/current-strategy-spec.md](docs/product-specs/current-strategy-spec.md)
 - Runtime conventions and file layout: [docs/references/runtime-conventions.md](docs/references/runtime-conventions.md)
-- Golden parity status: [docs/references/parity-status.md](docs/references/parity-status.md)
+- Archived parity notes: [docs/references/parity-status.md](docs/references/parity-status.md)
 
 ## Verification
 
 ```bash
 uv run pytest tests -q
-uv run pytest tests/golden -m golden -q
 uv run ruff check src tests
 uv run mypy src
 ```

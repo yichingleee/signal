@@ -46,6 +46,3 @@ warn_unused_configs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = [
-    "golden: parity checks against archived C++ replay baselines",
-]
