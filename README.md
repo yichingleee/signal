@@ -54,6 +54,20 @@ uv run python -m tw_signal_engine.cli.run_batch_replay \
   --config exec/cfg/parameter.cfg
 ```
 
+Regenerate charts from existing report CSVs without rerunning replay:
+
+```bash
+# Daily + batch charts from an existing batch log folder
+uv run python -m tw_signal_engine.cli.run_charts_only \
+  --log-dir log/0418_1541
+
+# Also rebuild per-symbol intraday timeline charts (requires replay data files)
+uv run python -m tw_signal_engine.cli.run_charts_only \
+  --log-dir log/0418_1541 \
+  --with-trade-day \
+  --data-dir /path/to/tick-data
+```
+
 For live/server workflows, install live runtime dependencies:
 
 ```bash
