@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import os
 from datetime import datetime
 from pathlib import Path
 
+_DEFAULT_DATA_DIR = "./data/"
+_PARQUET_DATA_DIR_ENV = "TW_SIGNAL_PARQUET_DATA_DIR"
 
-def _get_trading_dates(start: str, end: str, data_dir: str = "./data/") -> list[str]:
+
+def _get_trading_dates(start: str, end: str, data_dir: str = _DEFAULT_DATA_DIR) -> list[str]:
     """Find all trading dates between start and end that have data files."""
     data_path = Path(data_dir)
     available_dates: set[str] = set()
@@ -22,7 +26,7 @@ def _get_trading_dates(start: str, end: str, data_dir: str = "./data/") -> list[
     return result
 
 
-def _get_trading_dates_parquet(start: str, end: str, data_dir: str = "./data/") -> list[str]:
+def _get_trading_dates_parquet(start: str, end: str, data_dir: str = _DEFAULT_DATA_DIR) -> list[str]:
     """Find all trading dates available under the parquet tick-data root.
 
     A date counts when at least one of ``TWSE/<date>.parquet`` or
@@ -61,7 +65,14 @@ def main() -> None:
     parser.add_argument("--start", required=True, help="Start date YYYYMMDD")
     parser.add_argument("--end", required=True, help="End date YYYYMMDD")
     parser.add_argument("--config", default="./cfg/parameter.cfg", help="Config file path")
-    parser.add_argument("--data-dir", default="./data/", help="Data directory")
+    parser.add_argument(
+        "--data-dir",
+        default=None,
+        help=(
+            "Data directory. Default: text=./data/; "
+            "parquet=$TW_SIGNAL_PARQUET_DATA_DIR (fallback ./data/)"
+        ),
+    )
     parser.add_argument("--files-dir", default="./files/", help="Symbol files directory")
     parser.add_argument("--group-file", default="./files/group.csv", help="Group membership file")
     parser.add_argument("--no-cache", action="store_true", help="Disable history cache")
@@ -74,6 +85,12 @@ def main() -> None:
         help="Market-data ingestion path: new parquet root (default) or legacy text files",
     )
     args = parser.parse_args()
+    data_dir = args.data_dir
+    if data_dir is None:
+        if args.data_source == "parquet":
+            data_dir = os.environ.get(_PARQUET_DATA_DIR_ENV, _DEFAULT_DATA_DIR)
+        else:
+            data_dir = _DEFAULT_DATA_DIR
 
     from tw_signal_engine.market_data.parquet_history_loader import load_parquet_history_window
     from tw_signal_engine.market_data.rolling_history import RollingHistoryProvider
@@ -82,7 +99,7 @@ def main() -> None:
     from tw_signal_engine.reporting.generate_batch_reports import generate_batch_reports
 
     if args.data_source == "parquet":
-        dates = _get_trading_dates_parquet(args.start, args.end, args.data_dir)
+        dates = _get_trading_dates_parquet(args.start, args.end, data_dir)
         dates, missing_symbols_dates = _split_dates_by_symbols_file(dates, args.files_dir)
         if missing_symbols_dates:
             print(
@@ -90,7 +107,7 @@ def main() -> None:
                 + ", ".join(missing_symbols_dates)
             )
     else:
-        dates = _get_trading_dates(args.start, args.end, args.data_dir)
+        dates = _get_trading_dates(args.start, args.end, data_dir)
     print(f"Batch replay: {len(dates)} dates from {args.start} to {args.end}")
 
     if not dates:
@@ -106,8 +123,8 @@ def main() -> None:
     otc_provider: RollingHistoryProvider | None = None
     tse_provider: RollingHistoryProvider | None = None
     if args.data_source == "text":
-        otc_provider = RollingHistoryProvider("OTC", args.data_dir, use_cache=use_cache)
-        tse_provider = RollingHistoryProvider("TSE", args.data_dir, use_cache=use_cache)
+        otc_provider = RollingHistoryProvider("OTC", data_dir, use_cache=use_cache)
+        tse_provider = RollingHistoryProvider("TSE", data_dir, use_cache=use_cache)
 
     all_trades: list[TradeRecord] = []
 
@@ -117,8 +134,8 @@ def main() -> None:
         print(f"{'=' * 40}")
         try:
             if args.data_source == "parquet":
-                hw_otc = load_parquet_history_window("OTC", date, args.data_dir)
-                hw_tse = load_parquet_history_window("TSE", date, args.data_dir)
+                hw_otc = load_parquet_history_window("OTC", date, data_dir)
+                hw_tse = load_parquet_history_window("TSE", date, data_dir)
             else:
                 assert otc_provider is not None and tse_provider is not None
                 hw_otc = otc_provider.get_history(date)
@@ -128,7 +145,7 @@ def main() -> None:
             day_trades = run_daily_replay(
                 trade_date=date,
                 config_path=args.config,
-                data_dir=args.data_dir,
+                data_dir=data_dir,
                 files_dir=args.files_dir,
                 group_file=args.group_file,
                 log_folder=batch_folder,

@@ -9,12 +9,13 @@ import pytest
 
 from tw_signal_engine.market_data.parquet_io import (
     PARQUET_HISTORY_COLUMNS,
+    PARQUET_HISTORY_REQUIRED_COLUMNS,
     PARQUET_REPLAY_COLUMNS,
+    assert_history_schema,
     assert_replay_schema,
     parquet_path,
     to_int_price,
 )
-
 
 # ---------------------------------------------------------------------------
 # to_int_price
@@ -98,6 +99,18 @@ def _replay_table(**overrides: pa.Array) -> pa.Table:
     return pa.table(arrays)
 
 
+def _history_table(**overrides: pa.Array) -> pa.Table:
+    arrays: dict[str, pa.Array] = {
+        "symbol": pa.array(["2330"], type=pa.string()),
+        "time": pa.array([91500000000], type=pa.int64()),
+        "matchFlag": pa.array(["Y"], type=pa.string()),
+        "tradePrice": pa.array([588.0], type=pa.float64()),
+        "tradeVolume": pa.array([100], type=pa.int32()),
+    }
+    arrays.update(overrides)
+    return pa.table(arrays)
+
+
 def test_assert_replay_schema_accepts_canonical_table() -> None:
     assert_replay_schema(_replay_table())
 
@@ -118,6 +131,18 @@ def test_assert_replay_schema_lists_mistyped_column() -> None:
         assert_replay_schema(table)
     assert "mistyped" in str(exc.value)
     assert "tradeVolume" in str(exc.value)
+
+
+def test_assert_history_schema_accepts_required_columns() -> None:
+    assert_history_schema(_history_table().schema)
+
+
+def test_assert_history_schema_requires_matchflag_for_filter_contract() -> None:
+    table = _history_table().drop(["matchFlag"])
+    with pytest.raises(ValueError) as exc:
+        assert_history_schema(table.schema)
+    assert "missing" in str(exc.value)
+    assert "matchFlag" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------
@@ -163,3 +188,10 @@ def test_canonical_column_lists_are_complete() -> None:
     assert set(PARQUET_REPLAY_COLUMNS) == expected_replay
     # History needs the lighter projection (no quote levels).
     assert set(PARQUET_HISTORY_COLUMNS) == {"symbol", "time", "tradePrice", "tradeVolume"}
+    assert set(PARQUET_HISTORY_REQUIRED_COLUMNS) == {
+        "symbol",
+        "time",
+        "matchFlag",
+        "tradePrice",
+        "tradeVolume",
+    }

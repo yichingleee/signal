@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pyarrow as pa
+import pyarrow as pa  # type: ignore[import-untyped]
 
 PARQUET_REPLAY_COLUMNS: list[str] = [
     "symbol",
@@ -30,6 +30,14 @@ PARQUET_REPLAY_COLUMNS: list[str] = [
 PARQUET_HISTORY_COLUMNS: list[str] = [
     "symbol",
     "time",
+    "tradePrice",
+    "tradeVolume",
+]
+
+PARQUET_HISTORY_REQUIRED_COLUMNS: list[str] = [
+    "symbol",
+    "time",
+    "matchFlag",
     "tradePrice",
     "tradeVolume",
 ]
@@ -53,6 +61,14 @@ _REPLAY_SCHEMA: dict[str, pa.DataType] = {
     "sellPrice1": pa.float64(),
 }
 
+_HISTORY_SCHEMA: dict[str, pa.DataType] = {
+    "symbol": pa.string(),
+    "time": pa.int64(),
+    "matchFlag": pa.string(),
+    "tradePrice": pa.float64(),
+    "tradeVolume": pa.int32(),
+}
+
 
 _MARKET_TO_PARQUET_DIR: dict[str, str] = {
     "TSE": "TWSE",
@@ -70,16 +86,22 @@ def to_int_price(price: float) -> int:
     return round(price * 10000)
 
 
-def assert_replay_schema(table: pa.Table) -> None:
-    """Validate that ``table`` carries every replay column with the right type.
+def _schema_from(schema_or_table: pa.Schema | pa.Table) -> pa.Schema:
+    if isinstance(schema_or_table, pa.Schema):
+        return schema_or_table
+    return schema_or_table.schema
 
-    Raises ``ValueError`` listing missing columns and any column whose pyarrow
-    type does not match the expected mapping.
-    """
-    schema = table.schema
+
+def _assert_schema(
+    schema_or_table: pa.Schema | pa.Table,
+    expected_schema: dict[str, pa.DataType],
+    label: str,
+) -> None:
+    """Validate required parquet columns and types for a source contract."""
+    schema = _schema_from(schema_or_table)
     missing: list[str] = []
     mistyped: list[str] = []
-    for column, expected in _REPLAY_SCHEMA.items():
+    for column, expected in expected_schema.items():
         if column not in schema.names:
             missing.append(column)
             continue
@@ -92,7 +114,21 @@ def assert_replay_schema(table: pa.Table) -> None:
             parts.append(f"missing columns: {missing}")
         if mistyped:
             parts.append(f"mistyped columns: {mistyped}")
-        raise ValueError("parquet replay schema mismatch — " + "; ".join(parts))
+        raise ValueError(f"parquet {label} schema mismatch — " + "; ".join(parts))
+
+
+def assert_replay_schema(schema_or_table: pa.Schema | pa.Table) -> None:
+    """Validate that the replay parquet source carries required columns.
+
+    Raises ``ValueError`` listing missing columns and any column whose pyarrow
+    type does not match the expected mapping.
+    """
+    _assert_schema(schema_or_table, _REPLAY_SCHEMA, "replay")
+
+
+def assert_history_schema(schema_or_table: pa.Schema | pa.Table) -> None:
+    """Validate that the history parquet source carries required columns."""
+    _assert_schema(schema_or_table, _HISTORY_SCHEMA, "history")
 
 
 def parquet_path(root: str | Path, market: str, date: str) -> Path:

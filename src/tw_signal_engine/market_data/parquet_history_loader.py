@@ -1,9 +1,7 @@
 """Twenty-day cumulative-volume history loader fed by the parquet tick root.
 
-Drop-in replacement for ``load_history_window`` that produces the same
-``HistoryWindow`` shape but reads from the new parquet root at
-``/Users/liyijing/Projects/Trading/market-data/tick-data/`` instead of the
-legacy ``TSEQuote.YYYYMMDD`` / ``OTCQuote.YYYYMMDD`` text files.
+Produces the same ``HistoryWindow`` shape as the text loader, while enforcing
+the parquet source contract independently from legacy text output.
 """
 
 from __future__ import annotations
@@ -11,13 +9,14 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import pyarrow.parquet as pq
+import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
 from tw_signal_engine.market_data.history_window import HistoryWindow
 from tw_signal_engine.market_data.market_data_records import LinearVolumeTracker
 from tw_signal_engine.market_data.parquet_io import (
     PARQUET_HISTORY_COLUMNS,
     PARQUET_STATUS_EQ_FILTERS,
+    assert_history_schema,
     parquet_path,
     to_int_price,
 )
@@ -84,6 +83,7 @@ def _load_one_day(
     loader: per-symbol cumulative volume nodes plus a ``qty * price // 10``
     trading-value running total per symbol.
     """
+    assert_history_schema(pq.read_schema(str(path)))
     table = pq.read_table(
         str(path),
         columns=PARQUET_HISTORY_COLUMNS,
@@ -100,6 +100,8 @@ def _load_one_day(
     trading_val: dict[str, int] = {}
 
     for sym, raw_time, price, qty in zip(symbols, times, prices, volumes):
+        if qty < 0:
+            raise ValueError(f"parquet history source contract violation: negative tradeVolume for {sym} in {path}")
         ts_us = _convert_raw_time_to_us(raw_time)
         tracker.on_tick(sym, ts_us, qty)
         price_int = to_int_price(price)

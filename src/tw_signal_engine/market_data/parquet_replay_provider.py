@@ -1,9 +1,9 @@
 """Parquet-backed replay provider implementing ``MarketDataProvider``.
 
-Drop-in replacement for ``FileReplayProvider``: reads the OTC and TSE
-parquet files for one trade date from the new tick-data root, merges them
-in ``time`` order, and yields ``MarketTick`` records identical in shape to
-the legacy text path.
+Reads the OTC and TSE parquet files for one trade date from the tick-data
+root, validates the parquet source contract, merges them in ``time`` order,
+and yields ``MarketTick`` records with the same engine-facing shape as other
+providers.
 
 The provider absorbs the per-tick post-processing that
 ``merge_market_streams`` does today (``prev_limit_up`` lookup,
@@ -17,8 +17,8 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
-import pyarrow as pa
-import pyarrow.parquet as pq
+import pyarrow as pa  # type: ignore[import-untyped]
+import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
 from tw_signal_engine.market_data.market_data_records import NumTracker
 from tw_signal_engine.market_data.parquet_io import (
@@ -54,6 +54,7 @@ def _read_market_table(
 ) -> pa.Table:
     """Read one market's parquet file with column projection and pushdown filters."""
     path = parquet_path(root, market, date)
+    assert_replay_schema(pq.read_schema(str(path)))
     filters: list[tuple[str, str, object]] = list(PARQUET_STATUS_EQ_FILTERS)
     filters.append(("tradeVolume", ">", 0))
     if tick_filter:
@@ -63,7 +64,6 @@ def _read_market_table(
         columns=PARQUET_REPLAY_COLUMNS,
         filters=filters,
     )
-    assert_replay_schema(table)
     market_col = pa.array([market] * table.num_rows, type=pa.string())
     return table.append_column("market", market_col)
 

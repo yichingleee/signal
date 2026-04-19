@@ -4,6 +4,7 @@ Reference docs hold stable conventions, archived parity notes, and historical ma
 
 - [docs/references/runtime-conventions.md](runtime-conventions.md): CLI, file layout, inputs, outputs, and runtime conventions
 - [docs/references/parity-status.md](parity-status.md): archived C++ parity coverage and parity-sensitive implementation notes
+- [docs/references/parquet-vs-text-data-source-findings.md](parquet-vs-text-data-source-findings.md): parquet integration status, parquet-vs-text differences, and source-separation adoption guidance
 - [docs/references/research-audit.md](research-audit.md): migration audit summary that informed the rewrite
 - [docs/references/legacy/index.md](legacy/index.md): historical design notes retained only for context
 

@@ -36,7 +36,7 @@ def run_daily_replay(
 ) -> list[TradeRecord]:
 ```
 
-- If `provider is None` → constructs `FileReplayProvider` (backward compatible with batch replay)
+- If `provider is None` → constructs the replay provider selected by `data_source` (`ParquetReplayProvider` for parquet, `FileReplayProvider` for text)
 - If a provider is passed → uses it directly (live, paced, backfill, or any future source)
 
 This is a pure dependency-injection pattern — the caller decides the data source, the session logic is unchanged.
@@ -45,15 +45,23 @@ This is a pure dependency-injection pattern — the caller decides the data sour
 
 ## 2. Provider Implementations
 
-### 2.1 FileReplayProvider
+### 2.1 ParquetReplayProvider
+
+**File**: `src/tw_signal_engine/market_data/parquet_replay_provider.py`
+
+Reads `TWSE/YYYYMMDD.parquet` and `TPEX/YYYYMMDD.parquet`, validates the replay schema, applies parquet source filters, maps markets to engine codes (`TSE` / `OTC`), and yields chronological `MarketTick` objects. This is the default replay provider for the daily and batch CLIs.
+
+**When to use**: Default daily and batch replay from the parquet tick-data root.
+
+### 2.2 FileReplayProvider
 
 **File**: `src/tw_signal_engine/market_data/file_replay_provider.py`
 
 Wraps the existing `merge_market_streams()` function. Reads OTC + TSE archive files (`OTCQuote.YYYYMMDD`, `TSEQuote.YYYYMMDD`), merges them by `match_time_str`, and yields `MarketTick` objects. No timing delays — runs as fast as the CPU allows.
 
-**When to use**: Batch backtesting, golden parity tests, generating Parquet snapshots for replay mode.
+**When to use**: Explicit `--data-source text` compatibility runs and archived golden parity tests.
 
-### 2.2 PacedReplayProvider
+### 2.3 PacedReplayProvider
 
 **File**: `src/tw_signal_engine/market_data/paced_replay_provider.py`
 
@@ -76,7 +84,7 @@ sleep_needed = target_delay - (wall_time - start_wall)
 
 **When to use**: Dashboard development/testing without waiting for a full trading day. Activated via CLI flags `--paced --speed 2.0`.
 
-### 2.3 RedisLiveProvider
+### 2.4 RedisLiveProvider
 
 **File**: `src/tw_signal_engine/market_data/redis_live_provider.py`
 
@@ -193,7 +201,16 @@ class SessionHooks:
 
 ## 4. Data Flow Diagrams
 
-### Batch Replay (existing)
+### Batch Replay (default parquet)
+
+```
+TWSE + TPEX parquet files
+    → ParquetReplayProvider.iterate_ticks()
+    → replay_session.py main loop
+    → CSV reports (order_log, report_trades, report_summary)
+```
+
+### Batch Replay (legacy text)
 
 ```
 TSEQuote + OTCQuote files
@@ -338,7 +355,7 @@ To verify against a live Redis server (requires access to `192.168.100.130`):
 
 ### Parity Testing
 
-The gold standard for correctness: run the same day through both `FileReplayProvider` and `RedisLiveProvider` (by recording live ticks to a file), then diff the trade outputs. They must be identical.
+For live-provider correctness, run the same captured live tick source through `RedisLiveProvider` and an equivalent replay provider, then diff the trade outputs for that source. Do not use parquet-vs-text equality as a correctness gate; those feeds have separate source contracts.
 
 ```bash
 # Step 1: Run batch replay

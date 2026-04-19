@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pyarrow.parquet as pq
+import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
 _DATASET_RE = re.compile(r"day_adj_(\d{8})_(\d{8})$")
 

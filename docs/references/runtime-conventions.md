@@ -2,7 +2,24 @@
 
 ## Directory Layout
 
-The Python CLIs default to the original `exec/` working-directory layout.
+Daily and batch replay default to `--data-source parquet`. If `--data-dir` is omitted under parquet mode, the CLIs use `$TW_SIGNAL_PARQUET_DATA_DIR` when set and fall back to `./data/`.
+
+Preferred parquet layout:
+
+```text
+market-data/
+├── tick-data/
+│   ├── TWSE/
+│   │   └── YYYYMMDD.parquet
+│   └── TPEX/
+│       └── YYYYMMDD.parquet
+├── symbols/
+│   └── Symbols_YYYYMMDD.csv
+└── group/
+    └── group-ver20260329.csv
+```
+
+The legacy text source remains available with `--data-source text`:
 
 ```text
 exec/
@@ -20,23 +37,35 @@ exec/
 
 ## CLI Entry Points
 
-### Single-day replay
+### Single-day replay, parquet source
 
 ```bash
 uv run python -m tw_signal_engine.cli.run_daily_replay \
   --date YYYYMMDD \
-  --data-dir exec/data \
-  --files-dir exec/files \
-  --group-file exec/files/group.csv \
+  --data-dir /Users/liyijing/Projects/Trading/market-data/tick-data \
+  --files-dir /Users/liyijing/Projects/Trading/market-data/symbols \
+  --group-file /Users/liyijing/Projects/Trading/market-data/group/group-ver20260329.csv \
   --config exec/cfg/parameter.cfg
 ```
 
-### Batch replay
+### Batch replay, parquet source
 
 ```bash
 uv run python -m tw_signal_engine.cli.run_batch_replay \
   --start YYYYMMDD \
   --end YYYYMMDD \
+  --data-dir /Users/liyijing/Projects/Trading/market-data/tick-data \
+  --files-dir /Users/liyijing/Projects/Trading/market-data/symbols \
+  --group-file /Users/liyijing/Projects/Trading/market-data/group/group-ver20260329.csv \
+  --config exec/cfg/parameter.cfg
+```
+
+### Legacy text source
+
+```bash
+uv run python -m tw_signal_engine.cli.run_daily_replay \
+  --date YYYYMMDD \
+  --data-source text \
   --data-dir exec/data \
   --files-dir exec/files \
   --group-file exec/files/group.csv \
@@ -65,12 +94,28 @@ uv run python -m tw_signal_engine.cli.run_batch_replay \
 - format: `GroupName,Symbol,StockName`
 - parsed as UTF-8 with BOM support
 
-### Replay files
+### Replay files, parquet
+
+- `TWSE/YYYYMMDD.parquet`
+- `TPEX/YYYYMMDD.parquet`
+
+Parquet source contract:
+
+- required replay columns: `symbol`, `time`, `matchFlag`, `tradePrice`, `tradeVolume`, `buyPrice1`, `sellPrice1`
+- required history/filter columns: `symbol`, `time`, `matchFlag`, `tradePrice`, `tradeVolume`
+- market mapping is `TSE -> TWSE` and `OTC -> TPEX`
+- accepted replay rows satisfy `matchFlag == "Y"`, `time >= 09:00:00.000000`, and `tradeVolume > 0`
+- history rows use the same `matchFlag` and time filter and reject negative `tradeVolume`
+- `Symbols_YYYYMMDD.csv` is required for parquet replay; missing symbol files are guarded with a `[GUARD]` skip message
+
+### Replay files, legacy text
 
 - `TSEQuote.YYYYMMDD`
 - `OTCQuote.YYYYMMDD`
 
 The parser expects `Trade,...` rows and optional paired depth rows. Missing files are silently skipped by the low-level iterators, so missing-market situations can degrade coverage without raising a hard startup error.
+
+Parquet and text are separate replay sources. Cross-source comparisons are diagnostics; strict equality between `report_trades.csv` outputs is not a parquet acceptance gate.
 
 ## Price And Time Conventions
 
@@ -81,12 +126,12 @@ The parser expects `Trade,...` rows and optional paired depth rows. Missing file
 
 ## History Window Convention
 
-`load_history_window()` scans up to 21 sessions ending at the replay date:
+History loaders scan up to 20 prior sessions before the replay date:
 
-- slot `0`: target replay date
-- slots `1..20`: prior sessions used for history averages
+- slot `0`: most recent prior session
+- slot `19`: oldest prior session
 
-Group and single screening averages use the prior 20 sessions, not the target day.
+Group and single screening averages use the prior sessions, not the target day.
 
 ## Output Files
 
@@ -121,6 +166,7 @@ Columns:
 - strong-group metadata such as group rank and member rank
 - entry snapshots such as entry price, entry VWAP, and day high
 - market context fields such as `0050` open change and entry-time change
+- `DataSource`, indicating `parquet`, `text`, or `provider`
 
 ### Summary reports
 

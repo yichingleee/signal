@@ -441,6 +441,7 @@ def run_daily_replay(
     """
     if data_source not in ("text", "parquet"):
         raise ValueError(f"data_source must be 'text' or 'parquet', got {data_source!r}")
+    report_data_source = "provider" if provider is not None else data_source
 
     if data_source == "parquet" and _symbols_file_missing(files_dir, trade_date):
         print(
@@ -689,6 +690,7 @@ def run_daily_replay(
                 no_charts,
                 data_dir,
                 prev_day_lu,
+                report_data_source,
             )
             log_writer.close()
         return completed_trades
@@ -933,6 +935,7 @@ def run_daily_replay(
             no_charts,
             data_dir,
             prev_day_lu,
+            report_data_source,
         )
         log_writer.close()
 
@@ -951,8 +954,9 @@ def _generate_reports(
     no_charts: bool = False,
     data_dir: str = "./data/",
     prev_day_limit_up: dict[str, bool] | None = None,
+    data_source: str = "",
 ) -> None:
-    write_trade_report(completed_trades, log_dir, market_open_chg_pct)
+    write_trade_report(completed_trades, log_dir, market_open_chg_pct, data_source)
     write_summary_report(completed_trades, log_dir)
     write_category_report(completed_trades, log_dir)
 

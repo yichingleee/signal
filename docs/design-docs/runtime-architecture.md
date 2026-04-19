@@ -2,14 +2,15 @@
 
 ## Purpose
 
-`tw_signal_engine` replays archived Taiwan equity tick files for one trading day, applies deterministic screening and signal logic, manages simulated positions, and emits CSV outputs. The current runtime is batch/replay only; live UDP, Redis, and web-serving designs from older notes are not part of the Python implementation in this repository.
+`tw_signal_engine` replays archived Taiwan equity tick files for one trading day, applies deterministic screening and signal logic, manages simulated positions, and emits CSV outputs. Daily and batch replay support two explicit market-data sources: parquet, which is the default, and legacy text, which remains a compatibility path.
 
 ## Inputs
 
 - `exec/cfg/parameter.cfg`: legacy INI strategy config
 - `exec/files/Symbols_YYYYMMDD.csv`: symbol reference data for the replay date
 - `exec/files/group.csv`: group membership
-- `exec/data/TSEQuote.YYYYMMDD` and `exec/data/OTCQuote.YYYYMMDD`: replay streams
+- parquet replay root: `TWSE/YYYYMMDD.parquet` and `TPEX/YYYYMMDD.parquet` under `--data-dir`
+- optional text replay root: `TSEQuote.YYYYMMDD` and `OTCQuote.YYYYMMDD` under `--data-dir` when `--data-source text`
 - `artifacts/baseline/`: archived golden parity outputs, used by tests rather than by the runtime
 
 Detailed file conventions live in [docs/references/runtime-conventions.md](../references/runtime-conventions.md).
@@ -26,10 +27,12 @@ Detailed file conventions live in [docs/references/runtime-conventions.md](../re
 
 ### 2. History window build
 
-`market_data/load_history_window.py` scans the replay directory for up to 21 sessions at or before the target date.
+The history loader is selected by `--data-source`.
 
-- Index `0` is the target date.
-- Indices `1..20` are the 20-session history used by screening averages.
+- `market_data/parquet_history_loader.py` reads prior-session parquet files for the default parquet path.
+- `market_data/load_history_window.py` reads prior-session text files for the compatibility text path.
+- Index `0` is the most recent prior session.
+- Up to 20 prior sessions are used by screening averages.
 - Both OTC and TSE histories are loaded separately, then merged in `replay_session.py`.
 
 The history loader builds:
@@ -58,11 +61,16 @@ The history loader builds:
 
 `0050` is always included for market gating.
 
-### 5. Stream merge
+Parquet replay may feed `0050` market-gate state from the text proxy stream or day-bar open fallback because the parquet tick feed omits `00*` symbols.
 
-`replay/merge_market_streams.py` merges OTC and TSE streams in `match_time_str` order.
+### 5. Replay provider
 
-Per yielded tick it also:
+The replay provider is selected by `--data-source` unless a caller injects a custom `MarketDataProvider`:
+
+- parquet: `ParquetReplayProvider` reads `TWSE` and `TPEX` parquet files, validates the required schema, applies parquet source filters, tags engine markets as `TSE` / `OTC`, and yields ticks in chronological order.
+- text: `FileReplayProvider` reads `TSEQuote` and `OTCQuote` files and uses `replay/merge_market_streams.py` to merge them in `match_time_str` order.
+
+Per yielded tick the provider path also:
 
 - attaches the previous-day limit-up flag
 - marks `volatility_pause=True` for the first three trades per symbol
@@ -92,6 +100,8 @@ After the stream ends, or immediately before an early market-gate return, `repla
 - `report_trades.csv`
 - `report_summary.csv`
 - `report_by_category.csv`
+
+`report_trades.csv` includes `DataSource` so analysts can distinguish parquet, text, and custom-provider output when reviewing differences.
 
 If charts are enabled (default, unless `--no-charts` is set), the reporting pipeline also:
 
@@ -136,5 +146,6 @@ The runtime has several ordering rules that matter for correctness:
 - Prices are stored internally as integer `price * 10000`.
 - `match_time_str` is the canonical wall-clock tick timestamp.
 - `match_time_us` is the canonical rolling-window timestamp.
+- `text` and `parquet` are separate truth sources. Cross-source comparisons are diagnostics, not strict acceptance gates.
 - The Python implementation preserves some parity-sensitive C++ behaviors; see [docs/references/parity-status.md](../references/parity-status.md).
 - The main orchestration still lives in one file, `replay/replay_session.py`; the follow-up split is tracked in [docs/exec-plans/tech-debt-tracker.md](../exec-plans/tech-debt-tracker.md).

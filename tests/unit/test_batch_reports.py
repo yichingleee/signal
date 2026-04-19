@@ -117,6 +117,7 @@ class TestBatchCLIPropagation:
         with patch.object(sys, "argv", [
             "prog", "--start", "20260101", "--end", "20260101",
             "--cost-model", "commission=0.001425,tax=0.0015",
+            "--data-source", "text",
         ]):
             main()
 
@@ -138,6 +139,7 @@ class TestBatchCLIPropagation:
         with patch.object(sys, "argv", [
             "prog", "--start", "20260101", "--end", "20260101",
             "--no-charts",
+            "--data-source", "text",
         ]):
             main()
 

@@ -1,14 +1,14 @@
 # Architecture
 
-`tw_signal_engine` is a single-process deterministic replay/backtest engine for Taiwan equities. It replays archived OTC and TSE tick files, applies strong-group and signal logic tick by tick, and writes CSV trade logs plus summary reports.
+`tw_signal_engine` is a single-process deterministic replay/backtest engine for Taiwan equities. It replays archived OTC and TSE tick files, applies strong-group and signal logic tick by tick, and writes CSV trade logs plus summary reports. The default replay source is parquet; legacy text replay remains available as an explicit compatibility source.
 
 ## Runtime Flow
 
 1. Parse `exec/cfg/parameter.cfg` with the legacy INI loader and normalize it into typed config models.
 2. Load symbol reference data from `Symbols_YYYYMMDD.csv`, derive previous-day limit-up flags, and load `group.csv`.
-3. Build 20-session historical volume and trading-value caches from up to 21 replay sessions.
+3. Build 20-session historical volume and trading-value windows from the selected source (`parquet` by default, `text` when requested).
 4. Initialize screening state, then build the replay universe from strong-group symbols, any enabled strong-single candidates, and `0050` for market gating.
-5. Merge OTC and TSE replay files in `match_time_str` order.
+5. Construct the selected replay provider: `ParquetReplayProvider` reads `TWSE`/`TPEX` parquet files, while `FileReplayProvider` reads legacy `TSEQuote`/`OTCQuote` text files.
 6. For each trade tick: update market gate, update per-symbol intraday state, process exits first, then screening, signals, and entries.
 7. Force-close any remaining positions at the end of the session, or before an early market-gate abort, then write `order_log_*.csv`, `report_trades.csv`, `report_summary.csv`, and `report_by_category.csv`.
 
@@ -26,11 +26,14 @@
 
 The engine supports three data source modes via the `MarketDataProvider` abstraction:
 
-1. **File replay** (`FileReplayProvider`): reads archived OTC/TSE tick files. Default for batch backtesting.
-2. **Redis live** (`RedisLiveProvider`): consumes real-time ticks from Redis Pub/Sub via a background listener thread and a thread-safe queue bridge. The main loop stays single-threaded.
-3. **Backfill-then-live** (`BackfillThenLiveProvider`): replays archived files up to the current time, then switches to Redis live for mid-session startup.
+1. **Parquet replay** (`ParquetReplayProvider`): reads archived `TWSE/YYYYMMDD.parquet` and `TPEX/YYYYMMDD.parquet` files. Default for daily and batch replay.
+2. **File replay** (`FileReplayProvider`): reads legacy `TSEQuote.YYYYMMDD` and `OTCQuote.YYYYMMDD` text files when `--data-source text`.
+3. **Redis live** (`RedisLiveProvider`): consumes real-time ticks from Redis Pub/Sub via a background listener thread and a thread-safe queue bridge. The main loop stays single-threaded.
+4. **Backfill-then-live** (`BackfillThenLiveProvider`): replays archived files up to the current time, then switches to Redis live for mid-session startup.
 
 An optional `PacedReplayProvider` wrapper adds wall-clock delays to simulate live timing at configurable speed.
+
+Parquet and text are separate truth sources. Cross-source comparisons are diagnostic, not strict release gates, and `report_trades.csv` includes `DataSource` provenance.
 
 `SessionHooks` (optional callbacks) allow external consumers — the web server, Parquet snapshot writers — to observe engine events without modifying the core loop.
 

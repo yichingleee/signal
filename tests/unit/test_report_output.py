@@ -114,7 +114,19 @@ class TestEnhancedTradeReport:
         assert "Tax" in header
         assert "NetPnL" in header
         assert "TradeDate" in header
+        assert "DataSource" in header
         assert "EntryHourBucket" in header
+        data_source_index = header.index("DataSource")
+        assert rows[1][data_source_index] == ""
+
+    def test_trade_report_records_data_source(self, tmp_path: Path):
+        trades = [_make_trade()]
+        write_trade_report(trades, str(tmp_path), data_source="parquet")
+
+        with open(tmp_path / "report_trades.csv") as f:
+            rows = list(csv.reader(f))
+        data_source_index = rows[0].index("DataSource")
+        assert rows[1][data_source_index] == "parquet"
 
 
 class TestEnhancedSummaryReport:
