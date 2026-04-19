@@ -131,7 +131,10 @@ Impact:
 ## E. Path-specific infra differences
 
 - Text mode depends on volume cache and rolling history behavior.
-- Parquet mode intentionally bypasses text rolling-cache optimization.
+- Parquet mode now has its own binary day-cache + rolling history path.
+  - cache module: `market_data/parquet_history_cache.py`
+  - rolling provider: `market_data/parquet_rolling_history.py`
+  - precompute CLI: `python -m tw_signal_engine.cli.build_parquet_history_cache`
 
 Impact:
 

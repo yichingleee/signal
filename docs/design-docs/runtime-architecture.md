@@ -31,9 +31,14 @@ The history loader is selected by `--data-source`.
 
 - `market_data/parquet_history_loader.py` reads prior-session parquet files for the default parquet path.
 - `market_data/load_history_window.py` reads prior-session text files for the compatibility text path.
+- parquet history optionally uses binary day caches (`market_data/parquet_history_cache.py`) keyed by market/date and source-file freshness.
 - Index `0` is the most recent prior session.
 - Up to 20 prior sessions are used by screening averages.
 - Both OTC and TSE histories are loaded separately, then merged in `replay_session.py`.
+- batch replay uses rolling providers for both sources:
+  - text: `market_data/rolling_history.py`
+  - parquet: `market_data/parquet_rolling_history.py`
+- `--no-cache` disables both cache reads and cache writes.
 
 The history loader builds:
 

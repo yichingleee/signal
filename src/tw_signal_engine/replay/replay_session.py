@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable, Iterator, Mapping
 from datetime import datetime
@@ -135,12 +136,17 @@ def _symbols_file_missing(files_dir: str, trade_date: str) -> bool:
 
 def _find_0050_proxy_text_dir(trade_date: str, data_dir: str) -> str | None:
     """Find a legacy text replay root containing ``TSEQuote.<trade_date>``."""
+    env_text_root = os.environ.get("TW_SIGNAL_DATA_DIR")
     candidate_roots = [
         Path(data_dir),
+        Path(data_dir).parent / "tick-data",
+        Path(env_text_root) if env_text_root else None,
         Path(__file__).resolve().parents[3] / "exec" / "data",
     ]
     seen: set[Path] = set()
     for root in candidate_roots:
+        if root is None:
+            continue
         if root in seen:
             continue
         seen.add(root)
@@ -482,11 +488,23 @@ def run_daily_replay(
     if history is None:
         if data_source == "parquet":
             t0 = time.time()
-            hw_otc = load_parquet_history_window("OTC", trade_date, data_dir)
+            hw_otc = load_parquet_history_window(
+                "OTC",
+                trade_date,
+                data_dir,
+                use_cache=use_cache,
+                write_cache=use_cache,
+            )
             print(f"[TIMING] getTickData OTC: {(time.time() - t0) * 1000:.0f} ms")
 
             t0 = time.time()
-            hw_tse = load_parquet_history_window("TSE", trade_date, data_dir)
+            hw_tse = load_parquet_history_window(
+                "TSE",
+                trade_date,
+                data_dir,
+                use_cache=use_cache,
+                write_cache=use_cache,
+            )
             print(f"[TIMING] getTickData TSE: {(time.time() - t0) * 1000:.0f} ms")
         else:
             t0 = time.time()

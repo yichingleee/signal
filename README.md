@@ -37,6 +37,21 @@ uv run python -m tw_signal_engine.cli.run_batch_replay \
   --config exec/cfg/parameter.cfg
 ```
 
+Parquet history caches are supported for faster repeated runs. Build caches once:
+
+```bash
+uv run python -m tw_signal_engine.cli.build_parquet_history_cache \
+  --start 20260301 \
+  --end 20260331 \
+  --data-dir /Users/liyijing/Projects/Trading/market-data/tick-data \
+  --jobs 4
+```
+
+By default, cache files are written under a sibling `parquet-history-cache/`
+directory next to `--data-dir`. Override with
+`TW_SIGNAL_PARQUET_HISTORY_CACHE_DIR` or `--cache-dir`. Daily and batch replay
+use these caches automatically unless `--no-cache` is set.
+
 Parquet and text are separate data sources with separate truth contracts. Use `scripts/compare_text_vs_parquet.py` for diagnostics; strict text-vs-parquet `report_trades.csv` equality is not a release gate.
 
 For live/server workflows, install live runtime dependencies:

@@ -8,7 +8,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+import tw_signal_engine.market_data.parquet_history_loader as phl
 from tw_signal_engine.market_data.load_history_window import load_history_window
+from tw_signal_engine.market_data.parquet_history_cache import parquet_history_cache_path
 from tw_signal_engine.market_data.parquet_history_loader import (
     _convert_raw_time_to_us,
     _find_history_files,
@@ -189,6 +191,60 @@ def test_load_parquet_history_window_is_deterministic_for_same_inputs(tmp_path: 
     ]
     assert first_totals == second_totals
     assert first.trading_val == second.trading_val
+
+
+def test_load_parquet_history_window_writes_and_reuses_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    twse = tmp_path / "TWSE"
+    _write_minimal_parquet(twse / "20260320.parquet", symbol="1101", price=590.0, qty=200)
+    _write_minimal_parquet(twse / "20260326.parquet", symbol="1101", price=600.0, qty=300)
+    cache_root = tmp_path / "cache"
+
+    first = load_parquet_history_window(
+        "TSE",
+        "20260326",
+        tmp_path,
+        use_cache=True,
+        write_cache=True,
+        cache_root=cache_root,
+    )
+    assert first.num_days == 1
+    assert parquet_history_cache_path(cache_root, "TSE", "20260320").exists()
+
+    def _fail_if_called(*_args, **_kwargs):
+        raise AssertionError("_load_one_day should not run on warm cache")
+
+    monkeypatch.setattr(phl, "_load_one_day", _fail_if_called)
+    second = load_parquet_history_window(
+        "TSE",
+        "20260326",
+        tmp_path,
+        use_cache=True,
+        write_cache=True,
+        cache_root=cache_root,
+    )
+    assert second.source_dates == first.source_dates
+    assert second.trading_val == first.trading_val
+
+
+def test_load_parquet_history_window_respects_write_cache_false(tmp_path: Path) -> None:
+    twse = tmp_path / "TWSE"
+    _write_minimal_parquet(twse / "20260320.parquet", symbol="1101", price=590.0, qty=200)
+    _write_minimal_parquet(twse / "20260326.parquet", symbol="1101", price=600.0, qty=300)
+    cache_root = tmp_path / "cache"
+
+    hw = load_parquet_history_window(
+        "TSE",
+        "20260326",
+        tmp_path,
+        use_cache=True,
+        write_cache=False,
+        cache_root=cache_root,
+    )
+    assert hw.num_days == 1
+    assert not parquet_history_cache_path(cache_root, "TSE", "20260320").exists()
 
 
 def test_load_parquet_history_window_rejects_negative_volume(tmp_path: Path) -> None:

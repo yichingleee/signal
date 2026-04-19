@@ -24,7 +24,7 @@ def main() -> None:
     parser.add_argument("--files-dir", default="./files/", help="Symbol files directory")
     parser.add_argument("--group-file", default="./files/group.csv", help="Group membership file")
     parser.add_argument("--log-folder", default="", help="Log folder name")
-    parser.add_argument("--no-cache", action="store_true", help="Disable volume cache (keep data dir read-only)")
+    parser.add_argument("--no-cache", action="store_true", help="Disable history caches (keep data dir read-only)")
     parser.add_argument("--no-charts", action="store_true", help="Skip chart generation (CSV only)")
     parser.add_argument("--cost-model", default="", help="Override cost params: 'commission=0.001425,tax=0.0015'")
     parser.add_argument(

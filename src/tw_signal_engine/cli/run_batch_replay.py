@@ -92,7 +92,7 @@ def main() -> None:
         else:
             data_dir = _DEFAULT_DATA_DIR
 
-    from tw_signal_engine.market_data.parquet_history_loader import load_parquet_history_window
+    from tw_signal_engine.market_data.parquet_rolling_history import ParquetRollingHistoryProvider
     from tw_signal_engine.market_data.rolling_history import RollingHistoryProvider
     from tw_signal_engine.records.market_event_records import TradeRecord
     from tw_signal_engine.replay.replay_session import _merge_history_windows, run_daily_replay
@@ -117,12 +117,27 @@ def main() -> None:
     batch_folder = datetime.now().strftime("%m%d_%H%M")
     use_cache = not args.no_cache
 
-    # Create rolling history providers for both markets — text path only.
-    # Parquet history loads are fast enough that the rolling-cache optimization
-    # is a wash; per the plan we just call load_parquet_history_window per date.
+    # Create rolling history providers for both markets and data sources.
+    # Parquet mode can reuse prior-session windows across adjacent dates and
+    # optionally persist day caches for cold-start reduction.
+    parquet_otc_provider: ParquetRollingHistoryProvider | None = None
+    parquet_tse_provider: ParquetRollingHistoryProvider | None = None
     otc_provider: RollingHistoryProvider | None = None
     tse_provider: RollingHistoryProvider | None = None
-    if args.data_source == "text":
+    if args.data_source == "parquet":
+        parquet_otc_provider = ParquetRollingHistoryProvider(
+            "OTC",
+            data_dir,
+            use_cache=use_cache,
+            write_cache=use_cache,
+        )
+        parquet_tse_provider = ParquetRollingHistoryProvider(
+            "TSE",
+            data_dir,
+            use_cache=use_cache,
+            write_cache=use_cache,
+        )
+    else:
         otc_provider = RollingHistoryProvider("OTC", data_dir, use_cache=use_cache)
         tse_provider = RollingHistoryProvider("TSE", data_dir, use_cache=use_cache)
 
@@ -134,8 +149,9 @@ def main() -> None:
         print(f"{'=' * 40}")
         try:
             if args.data_source == "parquet":
-                hw_otc = load_parquet_history_window("OTC", date, data_dir)
-                hw_tse = load_parquet_history_window("TSE", date, data_dir)
+                assert parquet_otc_provider is not None and parquet_tse_provider is not None
+                hw_otc = parquet_otc_provider.get_history(date)
+                hw_tse = parquet_tse_provider.get_history(date)
             else:
                 assert otc_provider is not None and tse_provider is not None
                 hw_otc = otc_provider.get_history(date)

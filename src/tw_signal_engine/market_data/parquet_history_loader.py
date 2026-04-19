@@ -7,12 +7,21 @@ the parquet source contract independently from legacy text output.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
 from tw_signal_engine.market_data.history_window import HistoryWindow
 from tw_signal_engine.market_data.market_data_records import LinearVolumeTracker
+from tw_signal_engine.market_data.parquet_history_cache import (
+    BuildParquetHistoryCacheResult,
+    default_parquet_history_cache_root,
+    is_parquet_history_cache_fresh,
+    load_parquet_history_cache,
+    read_parquet_history_cache_metadata,
+    write_parquet_history_cache,
+)
 from tw_signal_engine.market_data.parquet_io import (
     PARQUET_HISTORY_COLUMNS,
     PARQUET_STATUS_EQ_FILTERS,
@@ -76,7 +85,7 @@ def _find_history_files(
 
 def _load_one_day(
     path: Path,
-) -> tuple[LinearVolumeTracker, dict[str, int]]:
+) -> tuple[LinearVolumeTracker, dict[str, int], int]:
     """Read a single prior-session parquet file into a tracker + value map.
 
     Mirrors the semantics of ``_parse_vol_cum_from_file`` in the legacy text
@@ -107,6 +116,111 @@ def _load_one_day(
         price_int = to_int_price(price)
         trading_val[sym] = trading_val.get(sym, 0) + qty * price_int // 10
 
+    return tracker, trading_val, table.num_rows
+
+
+def build_parquet_history_day_cache(
+    market_type: str,
+    date: str,
+    root: str | Path,
+    *,
+    cache_root: str | Path | None = None,
+    force: bool = False,
+) -> BuildParquetHistoryCacheResult:
+    """Build one parquet history cache entry for ``(market_type, date)``."""
+    started = time.perf_counter()
+    source_path = parquet_path(root, market_type, date)
+    resolved_cache_root = cache_root or default_parquet_history_cache_root(root)
+
+    if not source_path.exists():
+        elapsed = time.perf_counter() - started
+        return BuildParquetHistoryCacheResult(
+            market=market_type,
+            date=date,
+            path=source_path,
+            row_count=0,
+            elapsed_sec=elapsed,
+            status="failed",
+            message=f"missing source file: {source_path}",
+        )
+
+    if not force and is_parquet_history_cache_fresh(market_type, date, root, resolved_cache_root):
+        meta = read_parquet_history_cache_metadata(market_type, date, resolved_cache_root) or {}
+        row_count_value = meta.get("row_count", 0)
+        row_count = row_count_value if isinstance(row_count_value, int) else 0
+        elapsed = time.perf_counter() - started
+        return BuildParquetHistoryCacheResult(
+            market=market_type,
+            date=date,
+            path=source_path,
+            row_count=row_count,
+            elapsed_sec=elapsed,
+            status="skipped_fresh",
+            message="metadata and source stat match",
+        )
+
+    tracker, trading_val, row_count = _load_one_day(source_path)
+    cache_path = write_parquet_history_cache(
+        market_type=market_type,
+        date=date,
+        parquet_root=root,
+        cache_root=resolved_cache_root,
+        tracker=tracker,
+        trading_val=trading_val,
+        row_count=row_count,
+    )
+    elapsed = time.perf_counter() - started
+    return BuildParquetHistoryCacheResult(
+        market=market_type,
+        date=date,
+        path=cache_path,
+        row_count=row_count,
+        elapsed_sec=elapsed,
+        status="built",
+    )
+
+
+def load_parquet_history_day(
+    market_type: str,
+    date: str,
+    root: str | Path,
+    *,
+    use_cache: bool = True,
+    write_cache: bool = True,
+    cache_root: str | Path | None = None,
+) -> tuple[LinearVolumeTracker, dict[str, int]]:
+    """Load one day of prior-session history, optionally via day cache."""
+    source_path = parquet_path(root, market_type, date)
+    if not source_path.exists():
+        raise FileNotFoundError(source_path)
+
+    resolved_cache_root = cache_root or default_parquet_history_cache_root(root)
+    if use_cache and is_parquet_history_cache_fresh(market_type, date, root, resolved_cache_root):
+        try:
+            return load_parquet_history_cache(market_type, date, resolved_cache_root)
+        except (OSError, ValueError):
+            logger.warning(
+                "Parquet history cache unreadable for %s %s; reparsing source",
+                market_type,
+                date,
+            )
+
+    tracker, trading_val, row_count = _load_one_day(source_path)
+
+    if use_cache and write_cache:
+        try:
+            write_parquet_history_cache(
+                market_type=market_type,
+                date=date,
+                parquet_root=root,
+                cache_root=resolved_cache_root,
+                tracker=tracker,
+                trading_val=trading_val,
+                row_count=row_count,
+            )
+        except OSError:
+            logger.warning("Failed to write parquet history cache for %s %s", market_type, date)
+
     return tracker, trading_val
 
 
@@ -115,6 +229,9 @@ def load_parquet_history_window(
     date: str,
     root: str | Path,
     require_target_file: bool = True,
+    use_cache: bool = True,
+    write_cache: bool = True,
+    cache_root: str | Path | None = None,
 ) -> HistoryWindow:
     """Load up to 20 prior-session parquet files into a ``HistoryWindow``.
 
@@ -122,9 +239,13 @@ def load_parquet_history_window(
     the most recent prior session, index 19 is the oldest. The target replay
     date is NOT included in history.
 
-    When ``require_target_file`` is False, allows the caller to load history
-    on a date whose own parquet file is absent (matches the existing
-    text-loader contract for live mode).
+    When ``require_target_file`` is False, allows the caller to load history on
+    a date whose own parquet file is absent (matches the existing text-loader
+    contract for live mode).
+
+    When ``use_cache`` is True, each prior day is loaded from the binary cache
+    when fresh. On cache miss/staleness the loader reparses parquet and, when
+    ``write_cache`` is True, rewrites the day cache artifact.
     """
     files = _find_history_files(
         market_type,
@@ -137,8 +258,15 @@ def load_parquet_history_window(
     trading_val: list[dict[str, int]] = []
     source_dates: list[str] = []
 
-    for path, file_date in files:
-        tracker, tv = _load_one_day(path)
+    for _path, file_date in files:
+        tracker, tv = load_parquet_history_day(
+            market_type,
+            file_date,
+            root,
+            use_cache=use_cache,
+            write_cache=write_cache,
+            cache_root=cache_root,
+        )
         vol_cum.append(tracker)
         trading_val.append(tv)
         source_dates.append(file_date)

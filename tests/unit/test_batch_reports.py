@@ -146,3 +146,41 @@ class TestBatchCLIPropagation:
         mock_replay.assert_called_once()
         call_kwargs = mock_replay.call_args[1]
         assert call_kwargs["no_charts"] is True
+
+    @patch("tw_signal_engine.cli.run_batch_replay._split_dates_by_symbols_file", return_value=(["20260101"], []))
+    @patch("tw_signal_engine.cli.run_batch_replay._get_trading_dates_parquet", return_value=["20260101"])
+    @patch("tw_signal_engine.replay.replay_session.run_daily_replay", return_value=[])
+    @patch("tw_signal_engine.replay.replay_session._merge_history_windows")
+    @patch("tw_signal_engine.market_data.parquet_rolling_history.ParquetRollingHistoryProvider")
+    def test_parquet_uses_rolling_provider(
+        self,
+        mock_provider_cls,
+        mock_merge,
+        mock_replay,
+        _mock_dates,
+        _mock_split,
+    ):
+        import sys
+
+        from tw_signal_engine.cli.run_batch_replay import main
+
+        mock_provider_cls.return_value.get_history.return_value = None
+        mock_merge.return_value = None
+
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "prog",
+                "--start",
+                "20260101",
+                "--end",
+                "20260101",
+                "--data-source",
+                "parquet",
+            ],
+        ):
+            main()
+
+        assert mock_provider_cls.call_count == 2
+        mock_replay.assert_called_once()
