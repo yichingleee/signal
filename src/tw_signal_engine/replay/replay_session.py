@@ -22,6 +22,11 @@ from tw_signal_engine.market_data.parquet_history_loader import load_parquet_his
 from tw_signal_engine.market_data.parquet_io import to_int_price
 from tw_signal_engine.market_data.parquet_replay_provider import ParquetReplayProvider
 from tw_signal_engine.market_data.providers import MarketDataProvider
+from tw_signal_engine.market_data.proxy_0050_sidecar import (
+    default_sidecar_root,
+    load_0050_sidecar,
+    sidecar_path,
+)
 from tw_signal_engine.records.market_event_records import MarketTick, QuotePair, TradeRecord
 from tw_signal_engine.reference_data.derive_prev_day_limit_up import derive_prev_day_limit_up
 from tw_signal_engine.reference_data.load_group_membership import load_group_membership
@@ -566,14 +571,25 @@ def run_daily_replay(
     # gate and entry-change semantics match the text path; otherwise fall back to
     # day-bar open synthesis to keep circuit-breaker logic active.
     if data_source == "parquet" and p0050_prev > 0:
-        text_proxy_dir = _find_0050_proxy_text_dir(trade_date, data_dir)
-        if text_proxy_dir is not None:
-            proxy_0050_iter = iterate_market_file("TSE", trade_date, text_proxy_dir, {"0050"})
+        sidecar_root = default_sidecar_root(data_dir)
+        sidecar_file = sidecar_path(sidecar_root, trade_date)
+        if sidecar_file.exists():
+            proxy_0050_iter = load_0050_sidecar(trade_date, sidecar_root)
             proxy_0050_next = next(proxy_0050_iter, None)
             if proxy_0050_next is not None:
-                print(f"[GATE] 0050 proxy stream: {text_proxy_dir}/TSEQuote.{trade_date}")
+                print(f"[GATE] 0050 sidecar: {sidecar_file}")
             else:
                 proxy_0050_iter = None
+
+        if proxy_0050_next is None:
+            text_proxy_dir = _find_0050_proxy_text_dir(trade_date, data_dir)
+            if text_proxy_dir is not None:
+                proxy_0050_iter = iterate_market_file("TSE", trade_date, text_proxy_dir, {"0050"})
+                proxy_0050_next = next(proxy_0050_iter, None)
+                if proxy_0050_next is not None:
+                    print(f"[GATE] 0050 proxy stream: {text_proxy_dir}/TSEQuote.{trade_date}")
+                else:
+                    proxy_0050_iter = None
 
         if proxy_0050_next is None:
             day_bar_root = Path(data_dir).parent / "day-ohlcv-and-chip"
