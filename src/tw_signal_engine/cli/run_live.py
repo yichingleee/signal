@@ -38,7 +38,10 @@ def main() -> None:
     from tw_signal_engine.reference_data.derive_prev_day_limit_up import derive_prev_day_limit_up
     from tw_signal_engine.reference_data.load_group_membership import load_group_membership
     from tw_signal_engine.reference_data.load_symbol_reference import load_symbol_reference
-    from tw_signal_engine.replay.build_replay_universe import build_replay_universe
+    from tw_signal_engine.replay.build_replay_universe import (
+        build_replay_universe,
+        extract_valid_group_symbols,
+    )
     from tw_signal_engine.replay.replay_session import _merge_history_windows, run_daily_replay
     from tw_signal_engine.screening.evaluate_strong_group import StrongGroupEvaluator
     from tw_signal_engine.screening.evaluate_strong_single import StrongSingleEvaluator
@@ -97,7 +100,7 @@ def main() -> None:
     strong_single_valid = strong_single.initialize_validity() if config.strong_single.enabled else set()
 
     tick_filter = build_replay_universe(
-        set(strong_group.symbol_is_valid.keys()),
+        extract_valid_group_symbols(strong_group.symbol_is_valid),
         single_valid_symbols=strong_single_valid,
     )
     print(f"Live mode: subscribing to {len(tick_filter)} symbol channels")

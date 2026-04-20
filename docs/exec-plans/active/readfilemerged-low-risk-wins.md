@@ -13,12 +13,12 @@ The three low-risk wins are intentionally narrow and behavior-preserving. They d
 ## Progress
 
 - [x] (2026-04-20T00:00:00Z) Wrote this execution plan based on in-repo profiling and replay measurements on `20260326`.
-- [ ] Implement Win 1: build replay universe from `StrongGroup` true-valid symbols only.
-- [ ] Implement Win 2: compute group average percentage change at most once per `(group, tick)` in `StrongGroupEvaluator.on_tick()`.
-- [ ] Implement Win 3: avoid unconditional 20-day volume-query computation when filter knobs that need it are disabled.
-- [ ] Add and update unit tests covering new helper behavior and strong-group hot-path guard logic.
-- [ ] Run replay A/B benchmarks and confirm runtime improvement plus output parity.
-- [ ] Update this plan’s `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` with implementation evidence.
+- [x] Implement Win 1: build replay universe from `StrongGroup` true-valid symbols only.
+- [x] Implement Win 2: compute group average percentage change at most once per `(group, tick)` in `StrongGroupEvaluator.on_tick()`.
+- [x] Implement Win 3: avoid unconditional 20-day volume-query computation when filter knobs that need it are disabled.
+- [x] Add and update unit tests covering new helper behavior and strong-group hot-path guard logic.
+- [x] Run replay A/B benchmarks and confirm runtime improvement plus output parity.
+- [x] Update this plan’s `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` with implementation evidence.
 
 ## Surprises & Discoveries
 
@@ -37,6 +37,12 @@ The three low-risk wins are intentionally narrow and behavior-preserving. They d
 - Observation: parquet provider front-end read/sort is not the primary bottleneck.
   Evidence: Instrumented provider-only pass measured about `0.704s` for read+concat+sort versus about `5.795s` for Python-side batch conversion and `MarketTick` construction.
 
+- Observation: Initial Win-3 refactor introduced parity drift despite identical strategy qualification.
+  Root-cause evidence: `StrongGroupEvaluator` report metadata (`MatchInfo`) stopped aligning because `should_update` and lazy `vol_ratio` evaluation order changed.
+
+- Observation: After restoring baseline `ans`/`should_update` evaluation order and gating only unnecessary `query` calls, report outputs align exactly again.
+  Evidence: `diff` of `report_trades.csv` is empty for both `20260320` and `20260326`.
+
 ## Decision Log
 
 - Decision: keep scope to exactly three low-risk wins and avoid data-structure rewrites (symbol-id arrays, native kernels) in this plan.
@@ -51,16 +57,39 @@ The three low-risk wins are intentionally narrow and behavior-preserving. They d
   Rationale: `run_daily_replay`, `run_live`, and `run_server` currently build universe from the same broad key set pattern. Consistency reduces future divergence and surprise.
   Date/Author: 2026-04-20 / Codex
 
+- Decision: preserve report metadata update semantics when introducing lazy volume lookups.
+  Rationale: the `match_info` fields are part of behavioral parity; we kept baseline sequencing and only defer queries when no longer used by either filters or reporting.
+  Date/Author: 2026-04-20 / Codex
+
 ## Outcomes & Retrospective
 
-Implementation has not started yet. The expected outcome is a meaningful reduction in `readFileMerged` wall time on parquet replay dates such as `20260326`, with unchanged trade decisions and unchanged report CSV outputs for tested dates.
+Completed with parity preserved.
 
-When implementation completes, summarize in this section:
+1. before/after timings (`20260320`):
 
-1. before/after timings for `readFileMerged` and `TOTAL`;
-2. output parity results for selected dates;
-3. unit/regression test results;
-4. residual bottlenecks and next optimization target.
+   - Baseline (`tickFilter: 1065`): `readFileMerged: 57511 ms`, `TOTAL: 82408 ms`, `Total ticks processed: 1545124`
+   - Optimized (`tickFilter: 333`): `readFileMerged: 34878 ms`, `TOTAL: 60168 ms`, `Total ticks processed: 1287609`
+   - Improvement: `readFileMerged` -39.5%, `TOTAL` -27.0%.
+
+2. before/after timings (`20260326`):
+
+   - Baseline (`tickFilter: 1065`): `readFileMerged: 51589 ms`, `TOTAL: 76462 ms`, `Total ticks processed: 1300675`
+   - Optimized (`tickFilter: 347`): `readFileMerged: 31035 ms`, `TOTAL: 56629 ms`, `Total ticks processed: 1141712`
+   - Improvement: `readFileMerged` -39.9%, `TOTAL` -25.9%.
+
+3. output parity:
+
+   - `20260320`: no diff on `report_trades.csv` between `log/parity-before-20260320/20260320/report_trades.csv` and `log/parity-after-20260320/20260320/report_trades.csv`.
+   - `20260326`: no diff on `report_trades.csv` between `log/parity-before-20260326/20260326/report_trades.csv` and `log/parity-after-20260326/20260326/report_trades.csv`.
+
+4. validation:
+
+   - `uv run pytest tests -q`
+   - `uv run ruff check src tests`
+   - `uv run mypy src`
+
+5. residual bottleneck:
+   - Remaining runtime is dominated by tick intake + per-tick strategy/dashboard-state updates. The low-risk wins captured here did not touch I/O shape or reporting pipeline logic. Next optimization should target `MarketTick` materialization and ranking/snapshot update paths.
 
 ## Context and Orientation
 

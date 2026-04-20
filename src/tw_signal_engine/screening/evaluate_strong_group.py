@@ -144,14 +144,13 @@ class StrongGroupEvaluator:
             avg_pct += pct * ratio
         return avg_pct
 
-    def _is_valid_group(self, symbol: str, group: str) -> bool:
+    def _eval_group_validity(self, symbol: str, group: str, group_avg_pct: float) -> bool:
         cond1 = self.trading_value_month_avg.get(symbol, 0) >= self.config.member_min_month_trading_val
         cond2 = self.group_trading_value_month_avg_sum.get(group, 0) >= self.config.group_min_month_trading_val
-        avg_pct = self._group_percentage_chg(group, self.config.is_weighted_avg)
         if self._is_short:
-            cond3 = avg_pct < -self.config.group_min_avg_pct_chg
+            cond3 = group_avg_pct < -self.config.group_min_avg_pct_chg
         else:
-            cond3 = avg_pct > self.config.group_min_avg_pct_chg
+            cond3 = group_avg_pct > self.config.group_min_avg_pct_chg
 
         group_tv_cumu = self.group_trading_value_cumu.get(group, 0)
         group_tv_month = self.group_trading_value_month_avg_sum.get(group, 1)
@@ -159,6 +158,10 @@ class StrongGroupEvaluator:
         cond4 = val_ratio > self.config.group_min_val_ratio
 
         return cond1 and cond2 and cond3 and cond4
+
+    def _monthly_volume_average(self, symbol: str, match_time_us: int) -> int:
+        total_vol = sum(self.vol_cum[i].query(symbol, match_time_us) for i in range(len(self.vol_cum)))
+        return total_vol // self._num_days if total_vol > 0 else 1
 
     def on_tick(
         self,
@@ -207,31 +210,39 @@ class StrongGroupEvaluator:
         ans = False
         num_days = self._num_days
         for group in self.symbol_to_groups[symbol]:
-            if not self._is_valid_group(symbol, group):
+            g_pct = self._group_percentage_chg(group, self.config.is_weighted_avg)
+            if not self._eval_group_validity(symbol, group, g_pct):
                 continue
 
-            g_pct = self._group_percentage_chg(group, self.config.is_weighted_avg)
             self.group_rank.on_tick(group, self._ranking_score(g_pct))
 
             if not self.group_rank.is_top_n(group, self.config.group_valid_top_n):
                 continue
 
-            # Volume ratio check (vol_cum query still needed per-tick due to time dependency)
-            total_vol = sum(self.vol_cum[i].query(symbol, match_time_us) for i in range(len(self.vol_cum)))
-            avg = total_vol // num_days if total_vol > 0 else 1
-
-            # Use precomputed month total trading value
             total_tv = self._month_total_tv.get(symbol, 0)
+            vol_cumu = self.vol_cumu.get(symbol, 0)
+            group_monthly_tv_ok = total_tv // num_days > self.config.member_strong_trading_val
 
             group_vol_exempt = (
                 self.group_trading_value_month_avg_sum.get(group, 0) > self.config.group_vol_ratio_exempt_threshold
             )
-            vol_cumu = self.vol_cumu.get(symbol, 0)
+            need_volume_avg_for_filters = (
+                self.config.member_cond1_enabled
+                and not group_vol_exempt
+                and not group_monthly_tv_ok
+            )
+            avg = None
+            if need_volume_avg_for_filters:
+                avg = self._monthly_volume_average(symbol, match_time_us)
             cond1 = (
                 not self.config.member_cond1_enabled
                 or group_vol_exempt
-                or (vol_cumu / avg >= self.config.member_strong_vol_ratio if avg > 0 else False)
-                or total_tv // num_days > self.config.member_strong_trading_val
+                or group_monthly_tv_ok
+                or (
+                    vol_cumu / avg >= self.config.member_strong_vol_ratio
+                    if avg is not None and avg > 0
+                    else False
+                )
             )
             if self._is_short:
                 cond2 = not self.config.member_cond2_enabled or (price_pct < -0.02 and vwap_pct < -0.01)
@@ -296,18 +307,26 @@ class StrongGroupEvaluator:
                             raw_rank = self.group_member_raw_vwap_rank[group].get_rank(symbol)
                         if self.config.require_raw_m1 and raw_rank != 1:
                             result = False
-                        vr = vol_cumu / avg if avg > 0 else 0.0
-                        if self.config.entry_max_vol_ratio > 0 and vr >= self.config.entry_max_vol_ratio:
-                            result = False
                         ans = result
 
-                        # Update match info
+                        if self.config.entry_max_vol_ratio > 0 and avg is None:
+                            avg = self._monthly_volume_average(symbol, match_time_us)
+                        vr = vol_cumu / avg if avg is not None and avg > 0 else 0.0
+                        if self.config.entry_max_vol_ratio > 0 and vr >= self.config.entry_max_vol_ratio:
+                            result = False
+                            ans = False
+
                         should_update = (
                             symbol not in self.last_match_info
                             or self.last_match_info[symbol].member_rank == 0
                             or ans
                             or gr < self.last_match_info[symbol].group_rank
                         )
+                        if should_update and avg is None:
+                            avg = self._monthly_volume_average(symbol, match_time_us)
+                            vr = vol_cumu / avg if avg > 0 else 0.0
+
+                        # Update match info
                         if should_update:
                             ranked = self.group_member_vwap_rank[group].iter_ranked()
                             m1 = ranked[0][1] if ranked else ""

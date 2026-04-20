@@ -36,7 +36,10 @@ from tw_signal_engine.reference_data.derive_prev_day_limit_up import derive_prev
 from tw_signal_engine.reference_data.load_group_membership import load_group_membership
 from tw_signal_engine.reference_data.load_symbol_reference import load_symbol_reference
 from tw_signal_engine.replay.apply_market_gate import MarketGate
-from tw_signal_engine.replay.build_replay_universe import build_replay_universe
+from tw_signal_engine.replay.build_replay_universe import (
+    build_replay_universe,
+    extract_valid_group_symbols,
+)
 from tw_signal_engine.replay.iterate_market_file import iterate_market_file
 from tw_signal_engine.replay.session_hooks import ScreeningDetail, SessionHooks
 from tw_signal_engine.reporting.build_category_summary import write_category_report
@@ -686,9 +689,9 @@ def run_daily_replay(
     strong_single_valid_symbols = strong_single.initialize_validity() if strong_single_enabled_for_entry else set()
 
     # 5. Build replay universe
-    valid_group_symbols = set(strong_group.symbol_is_valid.keys())
+    valid_group_symbols = extract_valid_group_symbols(strong_group.symbol_is_valid)
     if strong_group_short is not None:
-        valid_group_symbols |= set(strong_group_short.symbol_is_valid.keys())
+        valid_group_symbols |= extract_valid_group_symbols(strong_group_short.symbol_is_valid)
     tick_filter = build_replay_universe(
         valid_group_symbols,
         single_valid_symbols=strong_single_valid_symbols,
