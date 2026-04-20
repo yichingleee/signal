@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tw_signal_engine.config.strategy_config import StrongGroupConfig
+from tw_signal_engine.config.strategy_config import StrongGroupConfig, TradeMode
 from tw_signal_engine.market_data.market_data_records import LinearVolumeTracker
 from tw_signal_engine.records.reference_records import ReferenceSymbol
 from tw_signal_engine.server.dashboard_snapshot import GroupSnapshot, MemberSnapshot
@@ -37,6 +37,7 @@ class StrongGroupEvaluator:
         trading_val: list[dict[str, int]],
         f1_map: dict[str, ReferenceSymbol],
         prev_day_limit_up: dict[str, bool],
+        trade_mode: TradeMode = "long",
         circuit_breaker_symbols: set[str] | None = None,
     ) -> None:
         self.config = config
@@ -46,6 +47,7 @@ class StrongGroupEvaluator:
         self.trading_val = trading_val
         self.f1_map = f1_map
         self.prev_day_limit_up = prev_day_limit_up
+        self.trade_mode = trade_mode
         self._num_days = DAY_PER_MONTH
 
         # Pre-computed data
@@ -74,6 +76,18 @@ class StrongGroupEvaluator:
 
         # Match info for reporting
         self.last_match_info: dict[str, MatchInfo] = {}
+
+    @property
+    def _is_short(self) -> bool:
+        return self.trade_mode == "short"
+
+    def _ranking_score(self, value: float) -> float:
+        return -value if self._is_short else value
+
+    def _vwap_rank_upper_bound(self) -> float:
+        if self.config.entry_max_vwap_pct_chg > 0:
+            return self.config.entry_max_vwap_pct_chg
+        return 0.085
 
     def initialize_validity(self) -> None:
         """Pre-compute which symbols are valid based on month avg trading val.
@@ -134,7 +148,10 @@ class StrongGroupEvaluator:
         cond1 = self.trading_value_month_avg.get(symbol, 0) >= self.config.member_min_month_trading_val
         cond2 = self.group_trading_value_month_avg_sum.get(group, 0) >= self.config.group_min_month_trading_val
         avg_pct = self._group_percentage_chg(group, self.config.is_weighted_avg)
-        cond3 = avg_pct > self.config.group_min_avg_pct_chg
+        if self._is_short:
+            cond3 = avg_pct < -self.config.group_min_avg_pct_chg
+        else:
+            cond3 = avg_pct > self.config.group_min_avg_pct_chg
 
         group_tv_cumu = self.group_trading_value_cumu.get(group, 0)
         group_tv_month = self.group_trading_value_month_avg_sum.get(group, 1)
@@ -159,11 +176,16 @@ class StrongGroupEvaluator:
 
         # Raw VWAP rank (minimal filter)
         raw_vwap_pct = self._percentage_chg(symbol, int(idx.vwap))
-        if not is_limit_up_locked and raw_vwap_pct < 0.085:
+        upper_bound = self._vwap_rank_upper_bound()
+        if self._is_short:
+            raw_rank_allowed = not is_limit_up_locked and raw_vwap_pct > -upper_bound
+        else:
+            raw_rank_allowed = not is_limit_up_locked and raw_vwap_pct < upper_bound
+        if raw_rank_allowed:
             for group in self.symbol_to_groups[symbol]:
                 if group not in self.group_member_raw_vwap_rank:
                     self.group_member_raw_vwap_rank[group] = GroupRank()
-                self.group_member_raw_vwap_rank[group].on_tick(symbol, raw_vwap_pct)
+                self.group_member_raw_vwap_rank[group].on_tick(symbol, self._ranking_score(raw_vwap_pct))
         else:
             for group in self.symbol_to_groups[symbol]:
                 if group in self.group_member_raw_vwap_rank:
@@ -189,7 +211,7 @@ class StrongGroupEvaluator:
                 continue
 
             g_pct = self._group_percentage_chg(group, self.config.is_weighted_avg)
-            self.group_rank.on_tick(group, g_pct)
+            self.group_rank.on_tick(group, self._ranking_score(g_pct))
 
             if not self.group_rank.is_top_n(group, self.config.group_valid_top_n):
                 continue
@@ -211,12 +233,21 @@ class StrongGroupEvaluator:
                 or (vol_cumu / avg >= self.config.member_strong_vol_ratio if avg > 0 else False)
                 or total_tv // num_days > self.config.member_strong_trading_val
             )
-            cond2 = not self.config.member_cond2_enabled or (price_pct > 0.02 and vwap_pct > 0.01)
+            if self._is_short:
+                cond2 = not self.config.member_cond2_enabled or (price_pct < -0.02 and vwap_pct < -0.01)
+            else:
+                cond2 = not self.config.member_cond2_enabled or (price_pct > 0.02 and vwap_pct > 0.01)
             member_vwap_chg = self._percentage_chg(symbol, int(idx.vwap))
-            cond4 = (
-                not self.config.member_cond4_enabled
-                or member_vwap_chg > self.config.member_vwap_pct_chg_threshold
-            )
+            if self._is_short:
+                cond4 = (
+                    not self.config.member_cond4_enabled
+                    or member_vwap_chg < -self.config.member_vwap_pct_chg_threshold
+                )
+            else:
+                cond4 = (
+                    not self.config.member_cond4_enabled
+                    or member_vwap_chg > self.config.member_vwap_pct_chg_threshold
+                )
 
             ref = self.f1_map.get(symbol)
             is_disposition = ref is not None and ref.security == "RR"
@@ -226,10 +257,14 @@ class StrongGroupEvaluator:
             if group not in self.group_member_vwap_rank:
                 self.group_member_vwap_rank[group] = GroupRank()
 
-            if is_limit_up_locked or exclude_disp or vwap_pct >= 0.085 or exclude_prev_lu:
+            if self._is_short:
+                outside_trade_zone = vwap_pct <= -upper_bound
+            else:
+                outside_trade_zone = vwap_pct >= upper_bound
+            if is_limit_up_locked or exclude_disp or outside_trade_zone or exclude_prev_lu:
                 self.group_member_vwap_rank[group].erase(symbol)
             elif cond1 and cond2 and cond4:
-                self.group_member_vwap_rank[group].on_tick(symbol, vwap_pct)
+                self.group_member_vwap_rank[group].on_tick(symbol, self._ranking_score(vwap_pct))
 
                 max_chosen = (
                     self.config.top_group_max_select
@@ -239,12 +274,20 @@ class StrongGroupEvaluator:
 
                 cnt = 0
                 block_disp = self.config.block_disposition_entry and is_disposition
-                for gain, member_sym in self.group_member_vwap_rank[group].iter_ranked():
+                for _rank_score, member_sym in self.group_member_vwap_rank[group].iter_ranked():
                     cnt += 1
                     if member_sym == symbol and not is_prev_day_lu and not block_disp and not ans:
-                        result = vwap_pct >= self.config.entry_min_vwap_pct_chg
-                        if self.config.entry_max_vwap_pct_chg > 0 and vwap_pct > self.config.entry_max_vwap_pct_chg:
-                            result = False
+                        if self._is_short:
+                            result = vwap_pct <= -self.config.entry_min_vwap_pct_chg
+                            if (
+                                self.config.entry_max_vwap_pct_chg > 0
+                                and vwap_pct < -self.config.entry_max_vwap_pct_chg
+                            ):
+                                result = False
+                        else:
+                            result = vwap_pct >= self.config.entry_min_vwap_pct_chg
+                            if self.config.entry_max_vwap_pct_chg > 0 and vwap_pct > self.config.entry_max_vwap_pct_chg:
+                                result = False
                         gr = self.group_rank.get_rank(group)
                         if self.config.entry_min_group_rank > 0 and gr < self.config.entry_min_group_rank:
                             result = False
@@ -312,6 +355,7 @@ class StrongGroupEvaluator:
             for rank_idx, (vwap_pct, sym) in enumerate(
                 members_ranked.iter_ranked(), 1
             ):
+                actual_vwap_pct = -vwap_pct if self._is_short else vwap_pct
                 ref = self.f1_map.get(sym)
                 name = ref.name if ref else sym
                 price_raw = self.price_last.get(sym, 0)
@@ -331,7 +375,7 @@ class StrongGroupEvaluator:
                         price=price_raw / 10000,
                         pct_chg=self._percentage_chg(sym, price_raw),
                         vwap=vwap_raw / 10000,
-                        vwap_pct_chg=vwap_pct,
+                        vwap_pct_chg=actual_vwap_pct,
                         cum_vol_ratio=cum_vol_ratio,
                         vol_shrink_ratio=0.0,
                         member_rank=rank_idx,

@@ -48,7 +48,7 @@ class TestCostModel:
         pos = _make_pos()
 
         completed: list = []
-        on_tick_exit(config, "2330", 500000, 499000, 132500000000, "SignalA", IndexData(), pos, completed)
+        on_tick_exit(config, "2330", 500000, 499000, 501000, 132500000000, "SignalA", IndexData(), pos, completed)
 
         assert len(completed) == 1
         tr = completed[0]
@@ -66,7 +66,7 @@ class TestCostModel:
         pos = _make_pos(entry_price=50.0, qty=10.0)
 
         completed: list = []
-        on_tick_exit(config, "2330", 500000, 499000, 132500000000, "SignalA", IndexData(), pos, completed)
+        on_tick_exit(config, "2330", 500000, 499000, 501000, 132500000000, "SignalA", IndexData(), pos, completed)
 
         tr = completed[0]
         assert tr.commission > 0
@@ -82,7 +82,7 @@ class TestCostModel:
         pos = _make_pos(entry_price=50.0, qty=10.0)
 
         completed: list = []
-        on_tick_exit(config, "2330", 500000, 499000, 132500000000, "SignalA", IndexData(), pos, completed)
+        on_tick_exit(config, "2330", 500000, 499000, 501000, 132500000000, "SignalA", IndexData(), pos, completed)
 
         tr = completed[0]
         assert tr.tax > 0
@@ -99,7 +99,7 @@ class TestCostModel:
         pos = _make_pos()
 
         completed: list = []
-        on_tick_exit(config, "2330", 500000, 499000, 132500000000, "SignalA", IndexData(), pos, completed)
+        on_tick_exit(config, "2330", 500000, 499000, 501000, 132500000000, "SignalA", IndexData(), pos, completed)
 
         tr = completed[0]
         assert abs(tr.net_pnl - (tr.gross_pnl - tr.commission - tr.tax)) < 0.01
@@ -140,10 +140,73 @@ class TestCostModel:
         # whatever price we pass. Since we enter at 50 and exit at a lower price,
         # the PnL depends on exit mechanism. Let me just verify costs are applied.
         completed: list = []
-        on_tick_exit(config, "2330", 490000, 489000, 132500000000, "SignalA", IndexData(), pos, completed)
+        on_tick_exit(config, "2330", 490000, 489000, 491000, 132500000000, "SignalA", IndexData(), pos, completed)
 
         tr = completed[0]
         # Even if trade is profitable at this exit price, costs should reduce net_pnl
         assert tr.commission > 0
         assert tr.tax > 0
         assert tr.net_pnl < tr.gross_pnl  # costs make it worse
+
+    def test_day_trade_tax_rate_takes_precedence_over_legacy_tax_rate(self):
+        config = ExecutionConfig(
+            position_cash=1000.0,
+            exit_time_limit=130000000000,
+            tax_rate=0.003,
+            day_trade_tax_rate=0.0015,
+            overnight_tax_rate=0.003,
+        )
+        pos = _make_pos(entry_price=50.0, qty=10.0)
+
+        completed: list = []
+        on_tick_exit(
+            config,
+            "2330",
+            500000,
+            499000,
+            501000,
+            132500000000,
+            "SignalA",
+            IndexData(),
+            pos,
+            completed,
+        )
+
+        tr = completed[0]
+        expected_tax = abs(pos.symbol_cash.get("2330", 0.0)) * 0.0015
+        assert tr.is_overnight is False
+        assert abs(tr.tax - expected_tax) < 0.1
+
+    def test_overnight_exit_uses_overnight_tax_rate(self):
+        config = ExecutionConfig(
+            position_cash=1000.0,
+            exit_time_limit=130000000000,
+            tax_rate=0.003,
+            day_trade_tax_rate=0.0015,
+            overnight_tax_rate=0.003,
+        )
+        pos = _make_pos(entry_price=50.0, qty=10.0)
+
+        completed: list = []
+        on_tick_exit(
+            config,
+            "2330",
+            500000,
+            499000,
+            501000,
+            93000000000,
+            "SignalA",
+            IndexData(),
+            pos,
+            completed,
+            trade_date="20260101",
+            exit_trade_date="20260102",
+            is_overnight_exit=True,
+            force_exit_cause="overnightExit",
+        )
+
+        tr = completed[0]
+        expected_tax = abs(pos.symbol_cash.get("2330", 0.0)) * 0.003
+        assert tr.is_overnight is True
+        assert tr.exit_trade_date == "20260102"
+        assert abs(tr.tax - expected_tax) < 0.1

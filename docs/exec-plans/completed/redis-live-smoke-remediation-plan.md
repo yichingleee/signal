@@ -20,7 +20,7 @@ caused engine-thread failure:
 TypeError: run_daily_replay() got an unexpected keyword argument 'provider'
 ```
 
-Observed in [ /tmp/twse_live_server_smoke.log ] during this session.
+Observed in `/tmp/twse_live_server_smoke.log` during this session.
 
 **Impact**:
 - `/api/status` serves HTTP, but the engine is not processing live ticks.
@@ -28,8 +28,8 @@ Observed in [ /tmp/twse_live_server_smoke.log ] during this session.
 
 ### 1.2 Contract drift is present in both live entrypoints
 
-- [`src/tw_signal_engine/cli/run_server.py`](/Users/liyijing/Projects/Trading/VWAP-intraday-signal/signal-live-data/src/tw_signal_engine/cli/run_server.py) and [`src/tw_signal_engine/cli/run_live.py`](/Users/liyijing/Projects/Trading/VWAP-intraday-signal/signal-live-data/src/tw_signal_engine/cli/run_live.py) call `run_daily_replay(..., provider=...)`.
-- [`src/tw_signal_engine/replay/replay_session.py`](/Users/liyijing/Projects/Trading/VWAP-intraday-signal/signal-live-data/src/tw_signal_engine/replay/replay_session.py) no longer accepts `provider`, `hooks`, or `on_dashboard_snapshot`.
+- [`src/tw_signal_engine/cli/run_server.py`](../../../src/tw_signal_engine/cli/run_server.py) and [`src/tw_signal_engine/cli/run_live.py`](../../../src/tw_signal_engine/cli/run_live.py) call `run_daily_replay(..., provider=...)`.
+- [`src/tw_signal_engine/replay/replay_session.py`](../../../src/tw_signal_engine/replay/replay_session.py) no longer accepts `provider`, `hooks`, or `on_dashboard_snapshot`.
 
 ### 1.3 Runtime packaging gap for live/server workflows
 
@@ -56,8 +56,8 @@ With `RedisLiveProvider` + `LiveState` + existing API app wired directly:
 - Redis reconnect and resume: pass
 
 Evidence files:
-- [`/tmp/twse_smoke_phase1.json`](/tmp/twse_smoke_phase1.json)
-- [`/tmp/twse_smoke_reconnect.json`](/tmp/twse_smoke_reconnect.json)
+- `/tmp/twse_smoke_phase1.json`
+- `/tmp/twse_smoke_reconnect.json`
 
 ## 2) Remediation Scope and Decisions
 
@@ -80,7 +80,7 @@ Evidence files:
 
 #### A1. Reintroduce provider/hooks callback contract in replay session
 
-Update [`src/tw_signal_engine/replay/replay_session.py`](/Users/liyijing/Projects/Trading/VWAP-intraday-signal/signal-live-data/src/tw_signal_engine/replay/replay_session.py):
+Update [`src/tw_signal_engine/replay/replay_session.py`](../../../src/tw_signal_engine/replay/replay_session.py):
 
 1. [x] Add optional parameters back to `run_daily_replay`:
    - `provider: MarketDataProvider | None = None`
@@ -104,8 +104,8 @@ Update [`src/tw_signal_engine/replay/replay_session.py`](/Users/liyijing/Project
 ### Phase B — Fix live CLIs to the restored contract (P0) [COMPLETED]
 
 Update:
-- [`src/tw_signal_engine/cli/run_server.py`](/Users/liyijing/Projects/Trading/VWAP-intraday-signal/signal-live-data/src/tw_signal_engine/cli/run_server.py)
-- [`src/tw_signal_engine/cli/run_live.py`](/Users/liyijing/Projects/Trading/VWAP-intraday-signal/signal-live-data/src/tw_signal_engine/cli/run_live.py)
+- [`src/tw_signal_engine/cli/run_server.py`](../../../src/tw_signal_engine/cli/run_server.py)
+- [`src/tw_signal_engine/cli/run_live.py`](../../../src/tw_signal_engine/cli/run_live.py)
 
 1. [x] Keep existing provider construction (`RedisLiveProvider` and optional `BackfillThenLiveProvider`).
 2. [x] Pass `provider`, `hooks`, `on_dashboard_snapshot` to restored `run_daily_replay`.
@@ -115,7 +115,7 @@ Update:
 
 ### Phase C — Resolve install/runtime dependency mismatch (P1) [COMPLETED]
 
-Update [`pyproject.toml`](/Users/liyijing/Projects/Trading/VWAP-intraday-signal/signal-live-data/pyproject.toml):
+Update [`pyproject.toml`](../../../pyproject.toml):
 
 1. [x] Make live/server runtime dependencies explicit and reproducible.
 2. [x] Recommended split:
@@ -131,7 +131,7 @@ for live/server workflows.
 
 ### Phase D — Make live startup resilient to missing same-day files (P1) [COMPLETED]
 
-Update history loading path (preferably in [`src/tw_signal_engine/market_data/load_history_window.py`](/Users/liyijing/Projects/Trading/VWAP-intraday-signal/signal-live-data/src/tw_signal_engine/market_data/load_history_window.py)):
+Update history loading path (preferably in [`src/tw_signal_engine/market_data/load_history_window.py`](../../../src/tw_signal_engine/market_data/load_history_window.py)):
 
 1. [x] Add a `require_target_file: bool = True` option.
 2. [x] For live mode (`run_live`, `run_server --mode live`), call with `require_target_file=False`.

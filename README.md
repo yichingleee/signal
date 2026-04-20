@@ -25,6 +25,25 @@ cd exec
 uv run python -m tw_signal_engine.cli.run_daily_replay --date 20260129 --data-source text
 ```
 
+To override default input paths for all CLI entrypoints, set environment variables:
+
+```bash
+export TW_SIGNAL_DATA_DIR=/absolute/path/to/tick-data
+export TW_SIGNAL_FILES_DIR=/absolute/path/to/symbols
+export TW_SIGNAL_GROUP_FILE=/absolute/path/to/group.csv
+```
+
+For project-local defaults with direnv:
+
+```bash
+cat > .envrc <<'EOF'
+export TW_SIGNAL_DATA_DIR=/absolute/path/to/tick-data
+export TW_SIGNAL_FILES_DIR=/absolute/path/to/symbols
+export TW_SIGNAL_GROUP_FILE=/absolute/path/to/group.csv
+EOF
+direnv allow
+```
+
 Batch replay is also available:
 
 ```bash
@@ -54,11 +73,30 @@ use these caches automatically unless `--no-cache` is set.
 
 Parquet and text are separate data sources with separate truth contracts. Use `scripts/compare_text_vs_parquet.py` for diagnostics; strict text-vs-parquet `report_trades.csv` equality is not a release gate.
 
+Regenerate charts from existing report CSVs without rerunning replay:
+
+```bash
+# Daily + batch charts from an existing batch log folder
+uv run python -m tw_signal_engine.cli.run_charts_only \
+  --log-dir log/0418_1541
+
+# Also rebuild per-symbol intraday timeline charts (requires replay data files)
+uv run python -m tw_signal_engine.cli.run_charts_only \
+  --log-dir log/0418_1541 \
+  --with-trade-day \
+  --data-dir /path/to/tick-data
+```
 For live/server workflows, install live runtime dependencies:
 
 ```bash
 uv sync --extra live
 ```
+
+## Signal Direction Modes
+
+- Default strategy mode is `Strategy.trade_mode=long`.
+- The default short-side signal path is `SignalAShort.enabled=true` (runs alongside `SignalA`/`SignalB` during the same replay).
+- `Strategy.trade_mode=short` is a legacy compatibility mode that remains supported. Use it only when you need historical short-only behavior from older runs.
 
 ## Repository Guide
 
@@ -68,13 +106,12 @@ uv sync --extra live
 - Current runtime architecture: [docs/design-docs/runtime-architecture.md](docs/design-docs/runtime-architecture.md)
 - Current committed strategy behavior: [docs/product-specs/current-strategy-spec.md](docs/product-specs/current-strategy-spec.md)
 - Runtime conventions and file layout: [docs/references/runtime-conventions.md](docs/references/runtime-conventions.md)
-- Golden parity status: [docs/references/parity-status.md](docs/references/parity-status.md)
+- Archived parity notes: [docs/references/parity-status.md](docs/references/parity-status.md)
 
 ## Verification
 
 ```bash
 uv run pytest tests -q
-uv run pytest tests/golden -m golden -q
 uv run ruff check src tests
 uv run mypy src
 ```

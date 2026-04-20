@@ -31,6 +31,7 @@ class TestTradeRecord:
         assert tr.pnl == 0.0
         assert tr.return_pct == 0.0
         assert tr.exit_price == 0.0
+        assert tr.side == "long"
 
 
 class TestEntryTrade:
@@ -38,3 +39,4 @@ class TestEntryTrade:
         et = EntryTrade(symbol="2330", signal_type="SignalA", enter_cause="StrongGroup")
         assert et.symbol == "2330"
         assert et.had_take_profit is False
+        assert et.side == "long"

@@ -20,6 +20,15 @@ from __future__ import annotations
 import argparse
 import time
 
+from tw_signal_engine.cli.default_paths import (
+    data_dir_help,
+    default_data_dir,
+    default_files_dir,
+    default_group_file,
+    files_dir_help,
+    group_file_help,
+)
+
 
 def _bench_history(args: argparse.Namespace) -> None:
     from tw_signal_engine.market_data.load_history_window import load_history_window
@@ -75,21 +84,21 @@ def main() -> None:
     h = sub.add_parser("history", help="Benchmark load_history_window")
     h.add_argument("--market", required=True, help="OTC or TSE")
     h.add_argument("--date", required=True, help="Target date YYYYMMDD")
-    h.add_argument("--data-dir", default="./data/", help="Data directory")
+    h.add_argument("--data-dir", default=default_data_dir(), help=data_dir_help())
 
     # parse sub-command
     p = sub.add_parser("parse", help="Benchmark iterate_market_file")
     p.add_argument("--market", required=True, help="OTC or TSE")
     p.add_argument("--date", required=True, help="Target date YYYYMMDD")
-    p.add_argument("--data-dir", default="./data/", help="Data directory")
+    p.add_argument("--data-dir", default=default_data_dir(), help=data_dir_help())
 
     # replay sub-command
     r = sub.add_parser("replay", help="Benchmark full run_daily_replay")
     r.add_argument("--date", required=True, help="Target date YYYYMMDD")
     r.add_argument("--config", default="./cfg/parameter.cfg", help="Config file path")
-    r.add_argument("--data-dir", default="./data/", help="Data directory")
-    r.add_argument("--files-dir", default="./files/", help="Symbol files directory")
-    r.add_argument("--group-file", default="./files/group.csv", help="Group membership file")
+    r.add_argument("--data-dir", default=default_data_dir(), help=data_dir_help())
+    r.add_argument("--files-dir", default=default_files_dir(), help=files_dir_help())
+    r.add_argument("--group-file", default=default_group_file(), help=group_file_help())
 
     args = parser.parse_args()
 

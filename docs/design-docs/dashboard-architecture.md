@@ -4,7 +4,7 @@ This document describes the as-built architecture of the Dashboard UI system —
 
 **Related docs**:
 - Live data providers that feed the dashboard: [live-data-architecture.md](live-data-architecture.md)
-- Pre-implementation research: [live-data-integration-research.md](live-data-integration-research.md)
+- Archived pre-implementation research: [../references/legacy/research/live-data-integration-research.md](../references/legacy/research/live-data-integration-research.md)
 
 ---
 

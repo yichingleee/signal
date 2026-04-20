@@ -1,6 +1,6 @@
 # Migrate market-data ingestion from legacy text files to parquet
 
-This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds. This document is maintained in accordance with `docs/exec-plans/PLANS.md`.
+This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds. This document is maintained in accordance with `docs/references/exec-plan-standard.md`.
 
 A deeper companion analysis lives at `docs/design-docs/market-data-migration-report.md`. That report is the source of every measurement, schema decision, and hygiene finding restated below; this plan inlines what an executor needs so it can be followed end-to-end without opening the report. If the report and the plan disagree, the plan wins because it is the executable artifact.
 

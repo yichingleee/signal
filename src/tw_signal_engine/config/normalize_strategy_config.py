@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+from typing import Literal, cast
+
 from tw_signal_engine.config.strategy_config import (
     ExecutionConfig,
     LiveConfig,
     NormalizedStrategyConfig,
     SignalAConfig,
+    SignalAShortConfig,
     SignalBConfig,
+    SignalDayHighConfig,
     StrategyGlobalConfig,
     StrongGroupConfig,
     StrongSingleConfig,
+    TradeMode,
+    validate_execution_split_invariants,
 )
 
 
@@ -29,7 +35,13 @@ def _min_to_us(minutes: float) -> float:
 def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrategyConfig:
     """Build a NormalizedStrategyConfig from raw INI sections."""
     strat_raw = raw.get("Strategy", {})
+    trade_mode = _get(strat_raw, "trade_mode", "long").lower()
+    if trade_mode not in {"long", "short"}:
+        raise ValueError(f"Invalid Strategy.trade_mode: {trade_mode}")
+    trade_mode_typed = cast(TradeMode, trade_mode)
+
     strategy = StrategyGlobalConfig(
+        trade_mode=trade_mode_typed,
         market_rally_disable_threshold=float(_get(strat_raw, "market_rally_disable_threshold", "0.02")),
         market_open_min_chg=float(_get(strat_raw, "market_open_min_chg", "0.0")),
     )
@@ -46,18 +58,49 @@ def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrat
     signal_a = SignalAConfig(
         enabled=_bool(_get(sa_raw, "enabled", "false")),
         vwap_near_ratio=float(_get(sa_raw, "vwap_near_ratio", "1.005")),
+        short_vwap_near_ratio=float(_get(sa_raw, "short_vwap_near_ratio", "0.993")),
         bounce_ratio=float(_get(sa_raw, "bounce_ratio", "0.006")),
         entry_start_time=int(_get(sa_raw, "entry_start_time", "92000000000")),
         entry_end_time=int(_get(sa_raw, "entry_end_time", "110000000000")),
         pre_condition_start_time=int(_get(sa_raw, "pre_condition_start_time", "91500000000")),
         pre_condition_vwap_ratio=float(_get(sa_raw, "pre_condition_vwap_ratio", "0.993")),
+        short_pre_condition_vwap_ratio=float(_get(sa_raw, "short_pre_condition_vwap_ratio", "1.007")),
         trade_zone_max_increase_ratio=float(_get(sa_raw, "trade_zone_max_increase_ratio", "0.085")),
         max_near_to_entry_us=int(float(_get(sa_raw, "max_near_to_entry_sec", "0")) * 1_000_000),
     )
 
+    # SignalAShort (new independent short signal)
+    sas_raw = raw.get("SignalAShort", {})
+    signal_a_short = SignalAShortConfig(
+        enabled=_bool(_get(sas_raw, "enabled", "false")),
+        vwap_near_ratio=float(_get(sas_raw, "vwap_near_ratio", _get(sa_raw, "short_vwap_near_ratio", "0.993"))),
+        bounce_ratio=float(_get(sas_raw, "bounce_ratio", _get(sa_raw, "bounce_ratio", "0.006"))),
+        entry_start_time=int(_get(sas_raw, "entry_start_time", _get(sa_raw, "entry_start_time", "92000000000"))),
+        entry_end_time=int(_get(sas_raw, "entry_end_time", _get(sa_raw, "entry_end_time", "110000000000"))),
+        pre_condition_start_time=int(
+            _get(sas_raw, "pre_condition_start_time", _get(sa_raw, "pre_condition_start_time", "91500000000"))
+        ),
+        pre_condition_vwap_ratio=float(
+            _get(
+                sas_raw,
+                "pre_condition_vwap_ratio",
+                _get(sa_raw, "short_pre_condition_vwap_ratio", "1.007"),
+            )
+        ),
+        trade_zone_max_increase_ratio=float(
+            _get(sas_raw, "trade_zone_max_increase_ratio", _get(sa_raw, "trade_zone_max_increase_ratio", "0.085"))
+        ),
+        max_near_to_entry_us=int(
+            float(_get(sas_raw, "max_near_to_entry_sec", _get(sa_raw, "max_near_to_entry_sec", "0"))) * 1_000_000
+        ),
+    )
+
     # SignalB
     sb_raw = raw.get("SignalB", {})
-    signal_b = SignalBConfig(enabled=_bool(_get(sb_raw, "enabled", "false")))
+    signal_b = SignalBConfig(
+        enabled=_bool(_get(sb_raw, "enabled", "false")),
+        supports_short=_bool(_get(sb_raw, "supports_short", "false")),
+    )
     if signal_b.enabled:
         signal_b.vol_contract_ratio = float(_get(sb_raw, "vol_contract_ratio", "0"))
         signal_b.rolling_low_duration_us = _min_to_us(float(_get(sb_raw, "ROLLING_LOW_DURATION", "0")))
@@ -82,6 +125,19 @@ def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrat
         signal_b.buffer_zone_start_time = int(_get(sb_raw, "buffer_zone_start_time", "0"))
         signal_b.buffer_zone_end_time = int(_get(sb_raw, "buffer_zone_end_time", "0"))
         signal_b.trade_zone_start_time = int(_get(sb_raw, "trade_zone_start_time", "0"))
+
+    # SignalDayHigh
+    sdh_raw = raw.get("SignalDayHigh", {})
+    signal_day_high = SignalDayHighConfig(
+        enabled=_bool(_get(sdh_raw, "enabled", "false")),
+        entry_start_time=int(_get(sdh_raw, "entry_start_time", "90500000000")),
+        entry_end_time=int(_get(sdh_raw, "entry_end_time", "100000000000")),
+        min_increase_ratio=float(_get(sdh_raw, "min_increase_ratio", "0.06")),
+        max_increase_ratio=float(_get(sdh_raw, "max_increase_ratio", "0.095")),
+        pullback_ratio=float(_get(sdh_raw, "pullback_ratio", "0.01")),
+        max_entries_per_symbol=int(_get(sdh_raw, "max_entries_per_symbol", "1")),
+        max_group_limit_up_count=int(_get(sdh_raw, "max_group_limit_up_count", "2")),
+    )
 
     # StrongGroup
     sg_raw = raw.get("StrongGroup", {})
@@ -135,13 +191,22 @@ def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrat
     # Execution (Order section)
     tp_offsets = _get(order_raw, "take_profit_tick_offsets", "-1,0,1,2,3")
     tp_pcts_str = _get(order_raw, "take_profit_pcts", "")
+    stop_loss_mode_day_high = _get(order_raw, "stop_loss_mode_day_high", "vwap") or "vwap"
+    stop_loss_mode_day_high = stop_loss_mode_day_high.lower()
+    if stop_loss_mode_day_high != "vwap":
+        raise ValueError(
+            f"Invalid Order.stop_loss_mode_day_high: {stop_loss_mode_day_high}; expected 'vwap'"
+        )
     execution = ExecutionConfig(
         position_cash=float(_get(order_raw, "position_cash", "10000000")),
         disposition_stocks_enabled=_bool(_get(order_raw, "disposition_stocks_enabled", "false")),
         filter_prev_day_limit_up=_bool(_get(order_raw, "filter_prev_day_limit_up", "true")),
         stop_loss_ratio_a=float(_get(order_raw, "stop_loss_ratio_a", "0.997")),
         stop_loss_ratio_b=float(_get(order_raw, "stop_loss_ratio_b", "0.997")),
+        stop_loss_ratio_day_high=float(_get(order_raw, "stop_loss_ratio_day_high", "0.990")),
+        stop_loss_mode_day_high=cast(Literal["vwap"], stop_loss_mode_day_high),
         bailout_ratio=float(_get(order_raw, "bailout_ratio", "0.985")),
+        hold_overnight_on_limit_up=_bool(_get(order_raw, "hold_overnight_on_limit_up", "false")),
         max_entry_price=float(_get(order_raw, "max_entry_price", "0")),
         no_entry_friday=_bool(_get(order_raw, "no_entry_friday", "false")),
         max_0050_entry_chg=float(_get(order_raw, "max_0050_entry_chg", "0")),
@@ -156,8 +221,16 @@ def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrat
         tp_base_entry=_bool(_get(order_raw, "tp_base_entry", "true")),
         commission_rate=float(_get(order_raw, "commission_rate", "0")),
         tax_rate=float(_get(order_raw, "tax_rate", "0")),
+        day_trade_tax_rate=float(_get(order_raw, "day_trade_tax_rate", "0")),
+        overnight_tax_rate=float(_get(order_raw, "overnight_tax_rate", "0")),
         slippage_bps=float(_get(order_raw, "slippage_bps", "0")),
     )
+    tax_rate_present = "tax_rate" in order_raw
+    if tax_rate_present and "day_trade_tax_rate" not in order_raw:
+        execution.day_trade_tax_rate = execution.tax_rate
+    if tax_rate_present and "overnight_tax_rate" not in order_raw:
+        execution.overnight_tax_rate = execution.tax_rate
+    validate_execution_split_invariants(execution)
 
     # Live config (optional section)
     live_raw = raw.get("Live", {})
@@ -174,7 +247,9 @@ def normalize_strategy_config(raw: dict[str, dict[str, str]]) -> NormalizedStrat
     return NormalizedStrategyConfig(
         strategy=strategy,
         signal_a=signal_a,
+        signal_a_short=signal_a_short,
         signal_b=signal_b,
+        signal_day_high=signal_day_high,
         strong_group=strong_group,
         strong_single=strong_single,
         execution=execution,

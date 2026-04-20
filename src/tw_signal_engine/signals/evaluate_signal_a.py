@@ -28,6 +28,7 @@ def evaluate_signal_a(
         if state.near_vwap:
             state.near_vwap = False
             state.low_since_near = 0
+            state.high_since_near = 0
             state.near_vwap_time = 0
             state.near_vwap_time_us = 0
             state.near_vwap_pv_ratio = 0.0
@@ -44,8 +45,10 @@ def evaluate_signal_a(
     # Max increase ratio filter
     if f1 is not None:
         prev_close = f1.previous_close * 10000
-        if prev_close > 0 and (price - prev_close) / prev_close > config.trade_zone_max_increase_ratio:
-            return False, "None"
+        if prev_close > 0:
+            pct_chg = (price - prev_close) / prev_close
+            if pct_chg > config.trade_zone_max_increase_ratio:
+                return False, "None"
 
     vwap = idx.vwap
     if vwap <= 0:
@@ -61,6 +64,7 @@ def evaluate_signal_a(
             state.near_vwap_time_us = match_time_us
             state.near_vwap_pv_ratio = pv_ratio
             state.low_since_near = price
+            state.high_since_near = 0
         return False, "None"
 
     # Timeout check
@@ -68,12 +72,13 @@ def evaluate_signal_a(
         state.triggered = True
         return False, "None"
 
-    # Track the low
     if price < state.low_since_near:
         state.low_since_near = price
-
-    # Phase 2: bounce detection
-    bounce = (price - state.low_since_near) / state.low_since_near if state.low_since_near > 0 else 0.0
+    bounce = (
+        (price - state.low_since_near) / state.low_since_near
+        if state.low_since_near > 0
+        else 0.0
+    )
     if bounce >= config.bounce_ratio:
         state.triggered = True
         return True, match_type

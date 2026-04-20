@@ -21,7 +21,7 @@ def write_trade_report(
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow([
-            "Symbol", "SignalType", "EnterCause", "EntryTime", "ExitTime", "LeaveCause",
+            "Symbol", "Side", "SignalType", "EnterCause", "EntryTime", "ExitTime", "LeaveCause",
             "PnL", "Return%", "HoldingDuration",
             "GroupName", "GroupRank", "MemberRank", "RawMemberRank", "M1Symbol",
             "EntryPrice", "EntryVWAP", "DayHigh", "PrevClose", "0050OpenChg%",
@@ -32,12 +32,12 @@ def write_trade_report(
             "TimeToFirstTP", "TPSlicesFilled",
             "GrossPnL", "Commission", "Tax", "Slippage", "NetPnL",
             "TPPnL", "ResidualPnL",
-            "TradeDate", "DataSource", "EntryHourBucket",
+            "TradeDate", "ExitTradeDate", "IsOvernight", "DataSource", "EntryHourBucket",
         ])
         for t in completed_trades:
             dur = duration_sec(t.entry_time_raw, t.exit_time_raw)
             w.writerow([
-                t.symbol, t.signal_type, t.enter_cause,
+                t.symbol, t.side, t.signal_type, t.enter_cause,
                 fmt_time(t.entry_time_raw), fmt_time(t.exit_time_raw),
                 t.final_leave_cause,
                 f"{t.pnl:.0f}", f"{t.return_pct:.2f}%", fmt_duration(dur),
@@ -58,6 +58,6 @@ def write_trade_report(
                 str(t.time_to_first_tp_sec), str(t.tp_slices_filled),
                 f"{t.gross_pnl:.0f}", f"{t.commission:.0f}", f"{t.tax:.0f}", f"{t.slippage:.0f}", f"{t.net_pnl:.0f}",
                 f"{t.tp_pnl:.0f}", f"{t.residual_pnl:.0f}",
-                t.trade_date, data_source, t.entry_hour_bucket,
+                t.trade_date, t.exit_trade_date, 1 if t.is_overnight else 0, data_source, t.entry_hour_bucket,
             ])
     print(f"[Report] {path}")

@@ -6,12 +6,12 @@
 
 ## Inputs
 
-- `exec/cfg/parameter.cfg`: legacy INI strategy config
-- `exec/files/Symbols_YYYYMMDD.csv`: symbol reference data for the replay date
-- `exec/files/group.csv`: group membership
-- parquet replay root: `TWSE/YYYYMMDD.parquet` and `TPEX/YYYYMMDD.parquet` under `--data-dir`
-- optional text replay root: `TSEQuote.YYYYMMDD` and `OTCQuote.YYYYMMDD` under `--data-dir` when `--data-source text`
-- `artifacts/baseline/`: archived golden parity outputs, used by tests rather than by the runtime
+- `cfg/parameter.cfg`: legacy INI strategy config
+- `Symbols_YYYYMMDD.csv` under `--files-dir` (or `TW_SIGNAL_FILES_DIR` / `./files/` fallback)
+- `group.csv` from `--group-file` (or `TW_SIGNAL_GROUP_FILE` / `./files/group.csv` fallback)
+- parquet replay root under `--data-dir`: `TWSE/YYYYMMDD.parquet` and `TPEX/YYYYMMDD.parquet`
+- `TSEQuote.YYYYMMDD` and `OTCQuote.YYYYMMDD` under `--data-dir` for `--data-source text` 
+  (or `TW_SIGNAL_DATA_DIR` / `./data/` fallback)
 
 Detailed file conventions live in [docs/references/runtime-conventions.md](../references/runtime-conventions.md).
 
@@ -24,6 +24,9 @@ Detailed file conventions live in [docs/references/runtime-conventions.md](../re
 1. Loads the legacy INI file through `config/load_legacy_ini.py`.
 2. Normalizes it into typed Pydantic models through `config/normalize_strategy_config.py`.
 3. Loads the symbol reference map, derives previous-day limit-up flags, and loads group membership.
+4. Reads `Strategy.trade_mode` (`long|short`) plus signal switches:
+   - preferred/default path: `trade_mode=long` with `SignalA` and `SignalAShort` concurrently
+   - legacy compatibility path: `trade_mode=short` (historical short-only behavior)
 
 ### 2. History window build
 
@@ -65,6 +68,7 @@ The history loader builds:
 - `0050`
 
 `0050` is always included for market gating.
+In `trade_mode=short` legacy compatibility mode, strong-single does not drive entries.
 
 Parquet replay may feed `0050` market-gate state from the text proxy stream or day-bar open fallback because the parquet tick feed omits `00*` symbols.
 
@@ -91,10 +95,17 @@ For each merged trade tick:
    - day high
    - day low
 4. If a position is open, process exits first through `execution/trade_ledger.py`.
-5. If still flat, evaluate strong-single and strong-group screening.
-6. Evaluate Signal A and Signal B.
-7. If either signal triggers, apply entry filters through `execution/should_enter()`.
-8. Execute the entry, stage take-profit orders, and write order-log rows immediately.
+5. If still flat, evaluate screening:
+   - long-side strong-single/strong-group path
+   - short-side strong-group weakest-path when `SignalAShort` is enabled
+   - in legacy `trade_mode=short`, strong-single entry contribution is disabled
+6. Evaluate Signal A, Signal A Short, and Signal B.
+   - Signal A: long state machine
+   - Signal A Short: mirrored short state machine
+   - legacy `trade_mode=short` maps Signal A behavior through the short-compat evaluator
+7. If any signal triggers, apply entry filters through `execution/should_enter()`.
+8. Execute the selected entry with side-aware trade mode, stage take-profit orders, and write order-log rows immediately.
+   - positions use signed quantity (`+` long / `-` short)
 
 ### 7. End-of-day closeout
 
@@ -124,12 +135,15 @@ Per-symbol timeline charts show replay-granularity price, session cumulative VWA
 The runtime has several ordering rules that matter for correctness:
 
 - Exits are always evaluated before new entries on the same tick.
-- If both Signal A and Signal B trigger on the same tick, the runtime enters as `SignalA`.
+- Signal priority is deterministic: `SignalA` > `SignalAShort` > `SignalB`.
 - Exit priority is:
   1. stop-loss
   2. time exit
   3. take-profit
   4. bailout
+- Exit fill quotes are side-aware:
+  - long closes on bid-side fallback to match
+  - short closes on ask-side fallback to match
 - Each symbol can have at most one open position at a time.
 
 ## Module Responsibilities

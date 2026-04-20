@@ -19,7 +19,15 @@ market-data/
     └── group-ver20260329.csv
 ```
 
-The legacy text source remains available with `--data-source text`:
+The Python CLIs support path defaults from both explicit CLI flags and environment:
+
+- `--data-dir`: explicit value, otherwise `TW_SIGNAL_PARQUET_DATA_DIR` (parquet source), otherwise `TW_SIGNAL_DATA_DIR`, otherwise `./data/`
+- `--files-dir`: explicit value, otherwise `TW_SIGNAL_FILES_DIR`, otherwise `./files/`
+- `--group-file`: explicit value, otherwise `TW_SIGNAL_GROUP_FILE`, otherwise `./files/group.csv`
+
+The legacy text source remains available with `--data-source text`.
+
+Classic `exec/` working-directory layout:
 
 ```text
 exec/
@@ -79,6 +87,15 @@ uv run python -m tw_signal_engine.cli.run_daily_replay \
 - legacy INI format
 - parsed case-sensitively
 - normalized into typed config models before runtime use
+- preferred/default short-side usage:
+  - keep `Strategy.trade_mode=long`
+  - set `SignalAShort.enabled=true` to run short Signal A concurrently
+- `Strategy.trade_mode=short` is a legacy compatibility mode and remains supported for historical short-only behavior
+- `SignalB` is currently long-only; in `Strategy.trade_mode=short` compatibility mode it is intentionally disabled
+- split invariants are validated at config normalization:
+  - `take_profit_splits > 0`
+  - `reserve_limit_up_splits >= 0`
+  - `take_profit_splits + reserve_limit_up_splits > 0`
 
 ### `Symbols_YYYYMMDD.csv`
 
@@ -93,6 +110,8 @@ uv run python -m tw_signal_engine.cli.run_daily_replay \
 
 - format: `GroupName,Symbol,StockName`
 - parsed as UTF-8 with BOM support
+- CLI default can point to any compatible CSV path via `TW_SIGNAL_GROUP_FILE`
+  (for example, versioned files such as `group-verYYYYMMDD.csv`)
 
 ### Replay files, parquet
 
@@ -197,7 +216,6 @@ Per-symbol timeline charts annotate:
 
 ```bash
 uv run pytest tests -q
-uv run pytest tests/golden -m golden -q
 uv run ruff check src tests
 uv run mypy src
 ```

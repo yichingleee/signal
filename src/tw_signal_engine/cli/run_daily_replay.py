@@ -5,6 +5,13 @@ from __future__ import annotations
 import argparse
 import os
 
+from tw_signal_engine.cli.default_paths import (
+    default_files_dir,
+    default_group_file,
+    files_dir_help,
+    group_file_help,
+)
+
 _DEFAULT_DATA_DIR = "./data/"
 _PARQUET_DATA_DIR_ENV = "TW_SIGNAL_PARQUET_DATA_DIR"
 
@@ -21,8 +28,8 @@ def main() -> None:
             "parquet=$TW_SIGNAL_PARQUET_DATA_DIR (fallback ./data/)"
         ),
     )
-    parser.add_argument("--files-dir", default="./files/", help="Symbol files directory")
-    parser.add_argument("--group-file", default="./files/group.csv", help="Group membership file")
+    parser.add_argument("--files-dir", default=default_files_dir(), help=files_dir_help())
+    parser.add_argument("--group-file", default=default_group_file(), help=group_file_help())
     parser.add_argument("--log-folder", default="", help="Log folder name")
     parser.add_argument("--no-cache", action="store_true", help="Disable history caches (keep data dir read-only)")
     parser.add_argument("--no-charts", action="store_true", help="Skip chart generation (CSV only)")

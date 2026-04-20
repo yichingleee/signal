@@ -47,6 +47,8 @@ def _make_trade(
         tax=0.0,
         net_pnl=pnl,
         trade_date="20260101",
+        exit_trade_date="20260101",
+        is_overnight=False,
         entry_hour_bucket="09:15-09:30",
         entry_price=50.0,
         group_name=group_name,
@@ -107,6 +109,7 @@ class TestEnhancedTradeReport:
         with open(path) as f:
             rows = list(csv.reader(f))
         header = rows[0]
+        assert "Side" in header
         assert "MAE%" in header
         assert "MFE%" in header
         assert "GrossPnL" in header
@@ -115,6 +118,8 @@ class TestEnhancedTradeReport:
         assert "NetPnL" in header
         assert "TradeDate" in header
         assert "DataSource" in header
+        assert "ExitTradeDate" in header
+        assert "IsOvernight" in header
         assert "EntryHourBucket" in header
         data_source_index = header.index("DataSource")
         assert rows[1][data_source_index] == ""
@@ -127,6 +132,20 @@ class TestEnhancedTradeReport:
             rows = list(csv.reader(f))
         data_source_index = rows[0].index("DataSource")
         assert rows[1][data_source_index] == "parquet"
+
+    def test_exit_trade_date_and_overnight_values_are_written(self, tmp_path: Path):
+        trades = [_make_trade()]
+        trades[0].is_overnight = True
+        trades[0].exit_trade_date = "20260102"
+        write_trade_report(trades, str(tmp_path))
+
+        with open(tmp_path / "report_trades.csv") as f:
+            rows = list(csv.reader(f))
+        header = rows[0]
+        data = rows[1]
+        assert data[header.index("TradeDate")] == "20260101"
+        assert data[header.index("ExitTradeDate")] == "20260102"
+        assert data[header.index("IsOvernight")] == "1"
 
 
 class TestEnhancedSummaryReport:

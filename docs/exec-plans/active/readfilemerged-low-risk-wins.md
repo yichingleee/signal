@@ -2,7 +2,7 @@
 
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
-This document is maintained in accordance with `docs/exec-plans/PLANS.md`. It is self-contained: a contributor should be able to start from this file and implement, validate, and benchmark the three low-risk optimizations without relying on prior chat context.
+This document is maintained in accordance with `docs/references/exec-plan-standard.md`. It is self-contained: a contributor should be able to start from this file and implement, validate, and benchmark the three low-risk optimizations without relying on prior chat context.
 
 ## Purpose / Big Picture
 

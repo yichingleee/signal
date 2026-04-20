@@ -1,8 +1,9 @@
-# Parity Status
+# Parity Notes (Archived)
 
 ## Current Status
 
-Archived golden parity coverage exists for eight replay dates:
+The repository no longer ships an automated golden parity pytest suite.
+The previous parity fixtures were archived for these replay dates:
 
 - `20260127`
 - `20260128`
@@ -13,30 +14,13 @@ Archived golden parity coverage exists for eight replay dates:
 - `20260224`
 - `20260225`
 
-The parity fixtures live under:
+The historical fixture layout was:
 
 - `artifacts/baseline/cpp/YYYYMMDD/`
 - `artifacts/baseline/python/YYYYMMDD/`
 
-The automated comparison path is:
-
-- `tests/golden/compare_baseline.py`
-- `tests/golden/test_replay_parity.py`
-
-## What The Golden Test Compares
-
-The current comparator validates:
-
-- `Symbol`
-- `SignalType`
-- `EnterCause`
-- `LeaveCause`
-- `EntryTime`
-- `ExitTime`
-- `PnL` within a tolerance of `1`
-- `GroupRank`
-- `MemberRank`
-- `RawMemberRank`
+The former comparator validated trade identity fields, rank fields, and `PnL`
+with a small tolerance.
 
 ## Confirmed Replay Delta Fixes
 
@@ -54,4 +38,5 @@ These are descriptions of the current parity lock, not endorsements of the desig
 
 ## Scope Note
 
-The golden tests verify archived replay parity, not future strategy intent. If the strategy config or runtime logic changes intentionally, this document and the golden baselines should be updated together.
+These notes are historical reference only. The source of truth for current
+behavior is the Python runtime plus unit/integration tests under `tests/`.

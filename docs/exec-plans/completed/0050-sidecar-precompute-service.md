@@ -2,7 +2,7 @@
 
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
-This document is maintained in accordance with `docs/exec-plans/PLANS.md`. It is self-contained: a contributor should be able to start from this file, inspect the current repository, implement the service, run the precomputation for available data from `20251216` through `20260407`, and verify that replay no longer scans `TSEQuote` just to feed `0050` into the market gate.
+This document is maintained in accordance with `docs/references/exec-plan-standard.md`. It is self-contained: a contributor should be able to start from this file, inspect the current repository, implement the service, run the precomputation for available data from `20251216` through `20260407`, and verify that replay no longer scans `TSEQuote` just to feed `0050` into the market gate.
 
 
 ## Purpose / Big Picture

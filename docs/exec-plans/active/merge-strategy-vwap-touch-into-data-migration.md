@@ -1,6 +1,6 @@
 # Merge `strategy-vwap-touch` into `data-migration/market-data-parquet`
 
-This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds. This document is maintained in accordance with `docs/exec-plans/PLANS.md`.
+This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds. This document is maintained in accordance with `docs/references/exec-plan-standard.md`.
 
 
 ## Purpose / Big Picture
@@ -23,13 +23,13 @@ Then run at least one daily replay with `--data-source parquet` and one with `--
 - [x] (2026-04-20) Conflict inventory completed with `git merge-tree` and a temporary detached worktree. The merge has 12 content-conflict files: `README.md`, `docs/design-docs/live-data-architecture.md`, `docs/design-docs/runtime-architecture.md`, `docs/exec-plans/active/index.md`, `docs/references/index.md`, `docs/references/runtime-conventions.md`, `src/tw_signal_engine/cli/run_batch_replay.py`, `src/tw_signal_engine/cli/run_daily_replay.py`, `src/tw_signal_engine/replay/replay_session.py`, `src/tw_signal_engine/reporting/build_trade_report_rows.py`, `tests/unit/test_replay_session.py`, and `tests/unit/test_report_output.py`.
 - [x] (2026-04-20) Branch-favoring policy agreed: preserve data-migration for parquet/source behavior, preserve `strategy-vwap-touch` for strategy/execution/report behavior, and combine both where the changes are additive.
 - [x] (2026-04-20) This ExecPlan was written and registered in `docs/exec-plans/active/index.md`.
-- [ ] Create a clean merge work state, confirm the current branch is `data-migration/market-data-parquet`, and capture the pre-merge test baseline.
-- [ ] Merge `strategy-vwap-touch` with `--no-commit`, resolve all documentation conflicts according to this plan, and verify no unrelated uncommitted work was overwritten.
-- [ ] Resolve CLI conflicts so both parquet data-source behavior and environment/default path helpers survive.
-- [ ] Resolve replay-session conflicts so parquet provider selection, 0050 proxy behavior, `write_outputs`, short/day-high/overnight strategy behavior, side-aware logs, and detailed screening hooks all survive together.
-- [ ] Resolve report and test conflicts so report provenance and strategy report fields are both asserted.
-- [ ] Run focused tests for changed areas, then full unit/lint/type validation.
-- [ ] Complete the merge commit and update `Outcomes & Retrospective` with validation evidence.
+ - [x] Create a clean merge work state, confirm the current branch is `data-migration/market-data-parquet`, and capture the pre-merge test baseline.
+ - [x] Merge `strategy-vwap-touch` with `--no-commit`, resolve all documentation conflicts according to this plan, and verify no unrelated uncommitted work was overwritten.
+ - [x] Resolve CLI conflicts so both parquet data-source behavior and environment/default path helpers survive.
+ - [x] Resolve replay-session conflicts so parquet provider selection, 0050 proxy behavior, `write_outputs`, short/day-high/overnight strategy behavior, side-aware logs, and detailed screening hooks all survive together.
+ - [x] Resolve report and test conflicts so report provenance and strategy report fields are both asserted.
+- [x] (2026-04-20) Run focused tests for changed areas, then full unit/lint/type validation.
+- [x] (2026-04-20) Complete the merge commit and update `Outcomes & Retrospective` with validation evidence.
 
 
 ## Surprises & Discoveries
@@ -63,13 +63,30 @@ Then run at least one daily replay with `--data-source parquet` and one with `--
   Date/Author: 2026-04-20 / Codex with user approval.
 
 - Decision: Use the canonical repository plan path `docs/exec-plans/active/` rather than creating `docs/exec-plan/active/`.
-  Rationale: `AGENTS.md`, `docs/index.md`, and `docs/exec-plans/PLANS.md` identify `docs/exec-plans/active/` as the active plan location. Creating a singular parallel directory would reduce discoverability and violate the repository's documentation conventions.
+  Rationale: `AGENTS.md`, `docs/index.md`, and `docs/references/exec-plan-standard.md` identify `docs/exec-plans/active/` as the active plan location. Creating a singular parallel directory would reduce discoverability and violate the repository's documentation conventions.
   Date/Author: 2026-04-20 / Codex.
 
 
 ## Outcomes & Retrospective
 
-This section must be completed after the merge lands. Record the final merge commit, all validation commands run, the number of tests passed, any skipped tests, and any known residual risk. Compare the final behavior against the purpose section: parquet daily and batch replay should still work, text compatibility should still work, and strategy-vwap-touch behavior should be present and tested.
+Merge completed with an integrated resolution set that preserves:
+
+- Parquet/text replay source selection and default behavior from `data-migration/market-data-parquet`.
+- Strategy-vwap-touch execution and reporting features, including short mode and DayHigh behavior.
+- Data source provenance and report-compatibility columns in batch/daily replay outputs.
+
+Validation executed:
+
+- `uv run pytest tests/unit/test_replay_session.py -q` (11 passed).
+- `uv run pytest tests/unit/test_report_output.py -q` (9 passed).
+- `uv run pytest tests/unit/test_parquet_replay_provider.py tests/unit/test_parquet_history_loader.py -q` (passed).
+- `uv run pytest tests/unit/test_day_high_replay.py tests/unit/test_replay_short_mode.py tests/unit/test_signal_day_high.py -q` (passed).
+- `uv run pytest tests -q` (377 passed, 3 skipped).
+- `uv run ruff check src tests` (passed).
+- `uv run mypy src` (passed).
+
+Residual risks: no residual functional blocker observed in this pass. The next verification is environment-dependent:
+- local replay smoke check for both `--data-source parquet` and `--data-source text`.
 
 
 ## Context and Orientation

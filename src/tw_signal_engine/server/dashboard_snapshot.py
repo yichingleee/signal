@@ -93,6 +93,7 @@ class PreparingEntry:
     day_low: float = 0.0
     stop_loss: float = 0.0
     near_vwap_pv_ratio: float = 0.0
+    side: str = "long"
 
 
 @dataclass(slots=True)
@@ -110,6 +111,8 @@ class ActivePosition:
     take_profit: float = 0.0
     day_high: float = 0.0
     entry_time: str = ""
+    side: str = "long"
+    qty: float = 0.0
 
 
 @dataclass(slots=True)
@@ -126,6 +129,7 @@ class CompletedTrade:
     entry_time: str = ""
     exit_time: str = ""
     exit_cause: str = ""
+    side: str = "long"
 
 
 @dataclass(slots=True)

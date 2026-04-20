@@ -7,6 +7,13 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+from tw_signal_engine.cli.default_paths import (
+    default_files_dir,
+    default_group_file,
+    files_dir_help,
+    group_file_help,
+)
+
 _DEFAULT_DATA_DIR = "./data/"
 _PARQUET_DATA_DIR_ENV = "TW_SIGNAL_PARQUET_DATA_DIR"
 
@@ -73,8 +80,8 @@ def main() -> None:
             "parquet=$TW_SIGNAL_PARQUET_DATA_DIR (fallback ./data/)"
         ),
     )
-    parser.add_argument("--files-dir", default="./files/", help="Symbol files directory")
-    parser.add_argument("--group-file", default="./files/group.csv", help="Group membership file")
+    parser.add_argument("--files-dir", default=default_files_dir(), help=files_dir_help())
+    parser.add_argument("--group-file", default=default_group_file(), help=group_file_help())
     parser.add_argument("--no-cache", action="store_true", help="Disable history cache")
     parser.add_argument("--no-charts", action="store_true", help="Skip chart generation")
     parser.add_argument("--cost-model", default="", help="Override cost params: 'commission=0.001425,tax=0.0015'")
@@ -95,6 +102,7 @@ def main() -> None:
     from tw_signal_engine.market_data.parquet_rolling_history import ParquetRollingHistoryProvider
     from tw_signal_engine.market_data.rolling_history import RollingHistoryProvider
     from tw_signal_engine.records.market_event_records import TradeRecord
+    from tw_signal_engine.records.overnight_records import OvernightHolding
     from tw_signal_engine.replay.replay_session import _merge_history_windows, run_daily_replay
     from tw_signal_engine.reporting.generate_batch_reports import generate_batch_reports
 
@@ -142,6 +150,7 @@ def main() -> None:
         tse_provider = RollingHistoryProvider("TSE", data_dir, use_cache=use_cache)
 
     all_trades: list[TradeRecord] = []
+    overnight_holdings: dict[str, OvernightHolding] = {}
 
     for date in dates:
         print(f"\n{'=' * 40}")
@@ -169,6 +178,7 @@ def main() -> None:
                 no_charts=args.no_charts,
                 cost_model_override=args.cost_model,
                 data_source=args.data_source,
+                overnight_holdings=overnight_holdings,
             )
             all_trades.extend(day_trades)
         except Exception as e:

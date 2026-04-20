@@ -1,4 +1,4 @@
-"""Signal B: Rolling low/volume-based (track → buffer → trade zones)."""
+"""Signal B: long-oriented rolling-low/volume state machine."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ def evaluate_signal_b(
     f1: ReferenceSymbol | None,
     is_stopped_loss: bool,
 ) -> tuple[bool, str]:
-    """Evaluate Signal B. Returns (triggered, trigger_match_type)."""
+    """Evaluate Signal B (long-only). Returns (triggered, trigger_match_type)."""
     if not config.enabled:
         return False, "None"
 

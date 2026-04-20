@@ -6,6 +6,8 @@ import argparse
 import logging
 from pathlib import Path
 
+from tw_signal_engine.cli.default_paths import data_dir_help, default_data_dir
+
 
 def _get_trading_dates(start: str, end: str, data_dir: str) -> list[str]:
     """Find all trading dates between start and end that have data files."""
@@ -26,7 +28,7 @@ def main() -> None:
     )
     parser.add_argument("--start", required=True, help="Start date YYYYMMDD")
     parser.add_argument("--end", required=True, help="End date YYYYMMDD")
-    parser.add_argument("--data-dir", default="./data/", help="Data directory")
+    parser.add_argument("--data-dir", default=default_data_dir(), help=data_dir_help())
     parser.add_argument(
         "--market",
         nargs="+",
