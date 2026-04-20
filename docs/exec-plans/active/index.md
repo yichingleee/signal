@@ -1,11 +1,6 @@
 # Active Plans
 
-- [Redis Live Mode Smoke-Test Remediation Plan](./redis-live-smoke-remediation-plan.md)
-- [Market-Data Parquet Migration](./market-data-parquet-migration.md) — keep parquet as the replay default, preserve text as a compatibility source, and validate each source against its own contract.
-- [Build and Use a Precomputed 0050 Sidecar](./0050-sidecar-precompute-service.md) — precompute tiny 0050 proxy files from `TSEQuote` so parquet replay does not scan multi-gigabyte text files on the hot path.
-
-Obsolete records retained for context:
-
-- [Parquet Text-Ground-Truth Parity Filter](./parquet-text-ground-truth-parity-filter.md) — superseded by the source-separated truth policy; do not implement as active work.
+- [Merge `strategy-vwap-touch` into Data-Migration Parquet Replay](./merge-strategy-vwap-touch-into-data-migration.md) — integrate strategy behavior with parquet replay without dropping either branch's runtime contract.
+- [Reduce `readFileMerged` Runtime With Three Low-Risk Wins](./readfilemerged-low-risk-wins.md) — reduce replay hot-path latency by narrowing universe symbols, removing duplicate group-average recomputation, and gating unnecessary volume-history queries.
 
 Move plans to `docs/exec-plans/completed/` once the work is shipped.
