@@ -69,6 +69,11 @@ class StrongGroupEvaluator:
         self.price_last: dict[str, int] = {}
         self.vol_cumu: dict[str, int] = {}
 
+        # Incremental group-average state
+        self._group_pct_sum: dict[str, float] = {}
+        self._group_weighted_pct_numerator: dict[str, float] = {}
+        self._symbol_pct_chg: dict[str, float] = {}
+
         # Rankings
         self.group_rank = GroupRank()
         self.group_member_vwap_rank: dict[str, GroupRank] = {}
@@ -96,6 +101,8 @@ class StrongGroupEvaluator:
         """
         num_days = self._num_days
         for group, members in self.group_members.items():
+            self._group_pct_sum[group] = 0.0
+            self._group_weighted_pct_numerator[group] = 0.0
             for symbol in members:
                 if symbol not in self.symbol_is_valid:
                     total = sum(self.trading_val[i].get(symbol, 0) for i in range(len(self.trading_val)))
@@ -128,6 +135,9 @@ class StrongGroupEvaluator:
         return (price - prev_close) / prev_close
 
     def _group_percentage_chg(self, group: str, weighted_avg: bool) -> float:
+        return self._group_percentage_chg_slow(group, weighted_avg)
+
+    def _group_percentage_chg_slow(self, group: str, weighted_avg: bool) -> float:
         avg_pct = 0.0
         members = self.group_members.get(group, set())
         for symbol in members:
@@ -143,6 +153,36 @@ class StrongGroupEvaluator:
                 pct = self._percentage_chg(symbol, self.price_last[symbol])
             avg_pct += pct * ratio
         return avg_pct
+
+    def _update_group_average_state(self, symbol: str, new_price: int, delta_trading_value: int) -> None:
+        old_pct = self._symbol_pct_chg.get(symbol, 0.0)
+        old_tv = self.trading_value_cumu.get(symbol, 0)
+
+        new_tv = old_tv + delta_trading_value
+        new_pct = self._percentage_chg(symbol, new_price)
+
+        for group in self.symbol_to_groups[symbol]:
+            self._group_pct_sum[group] = self._group_pct_sum.get(group, 0.0) + (new_pct - old_pct)
+            weighted_old = old_tv * old_pct
+            weighted_new = new_tv * new_pct
+            self._group_weighted_pct_numerator[group] = (
+                self._group_weighted_pct_numerator.get(group, 0.0) + (weighted_new - weighted_old)
+            )
+
+        self._symbol_pct_chg[symbol] = new_pct
+        self.trading_value_cumu[symbol] = new_tv
+
+    def _current_group_avg_pct(self, group: str) -> float:
+        if self.config.is_weighted_avg:
+            group_tv = self.group_trading_value_cumu.get(group, 0)
+            if group_tv <= 0:
+                return 0.0
+            return self._group_weighted_pct_numerator.get(group, 0.0) / group_tv
+
+        member_count = self.group_member_count.get(group, 0)
+        if member_count <= 0:
+            return 0.0
+        return self._group_pct_sum.get(group, 0.0) / member_count
 
     def _eval_group_validity(self, symbol: str, group: str, group_avg_pct: float) -> bool:
         cond1 = self.trading_value_month_avg.get(symbol, 0) >= self.config.member_min_month_trading_val
@@ -198,11 +238,11 @@ class StrongGroupEvaluator:
 
         # Update cumulative values
         tv = price * qty
-        self.trading_value_cumu[symbol] = self.trading_value_cumu.get(symbol, 0) + tv
         for group in self.symbol_to_groups[symbol]:
             self.group_trading_value_cumu[group] = self.group_trading_value_cumu.get(group, 0) + tv
         self.price_last[symbol] = price
         self.vol_cumu[symbol] = self.vol_cumu.get(symbol, 0) + qty
+        self._update_group_average_state(symbol, price, tv)
 
         vwap_pct = self._percentage_chg(symbol, int(idx.vwap))
         price_pct = self._percentage_chg(symbol, price)
@@ -210,7 +250,7 @@ class StrongGroupEvaluator:
         ans = False
         num_days = self._num_days
         for group in self.symbol_to_groups[symbol]:
-            g_pct = self._group_percentage_chg(group, self.config.is_weighted_avg)
+            g_pct = self._current_group_avg_pct(group)
             if not self._eval_group_validity(symbol, group, g_pct):
                 continue
 
@@ -401,9 +441,7 @@ class StrongGroupEvaluator:
                     )
                 )
 
-            avg_pct = self._group_percentage_chg(
-                group_name, self.config.is_weighted_avg
-            )
+            avg_pct = self._current_group_avg_pct(group_name)
             group_tv_cumu = self.group_trading_value_cumu.get(group_name, 0)
             group_tv_month = self.group_trading_value_month_avg_sum.get(
                 group_name, 1
