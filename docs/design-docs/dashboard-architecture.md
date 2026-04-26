@@ -10,12 +10,14 @@ This document describes the as-built architecture of the Dashboard UI system —
 
 ## 1. System Overview
 
-The dashboard is a monitoring tool for the signal engine. It shows strong groups, strong singles, VWAP proximity, and Signal A trade lifecycle (preparing → entered → exited) in real time.
+The dashboard is a monitoring tool for the signal engine. It shows strong groups, strong singles, VWAP proximity, and signal lifecycles (Signal A, SignalAShort, SignalDayHigh) in real time.
 
 ```
 ┌─────────────────────────────────────────────────────┐
 │                  React SPA (dashboard/)              │
 │  MarketOverview  │  SignalAMonitor                   │
+│                  │  SignalAShortMonitor              │
+│                  │  DayHighMonitor                   │
 │  ─ GroupGrid     │  ─ PreparingCards                 │
 │  ─ SinglesTable  │  ─ ActiveCards                    │
 │  ─ VWAPTable     │  ─ ExitedCards + Counters         │
@@ -24,7 +26,7 @@ The dashboard is a monitoring tool for the signal engine. It shows strong groups
          ▼                    ▼
 ┌─────────────────────────────────────────────────────┐
 │              FastAPI Backend (server/)                │
-│  /api/dashboard/{groups,singles,vwap,signal-a}       │
+│  /api/dashboard/{groups,singles,vwap,signal-a,signal-b,signal-day-high,modules} │
 │  /api/replay/{status,jump}                           │
 │  Socket.IO: dashboard:snapshot                       │
 └────────┬────────────────────┬────────────────────────┘
@@ -85,6 +87,9 @@ This means the frontend never needs to know which mode is active — it calls th
 | `GET /api/dashboard/singles` | GET | Strong individual stocks |
 | `GET /api/dashboard/vwap` | GET | VWAP monitoring table for all universe symbols |
 | `GET /api/dashboard/signal-a` | GET | Signal A lifecycle: preparing, entered, exited, counters |
+| `GET /api/dashboard/signal-b` | GET | Signal B monitoring state and counters |
+| `GET /api/dashboard/signal-day-high` | GET | DayHigh monitoring: rows plus lifecycle cards (preparing/entered/exited/counters) |
+| `GET /api/dashboard/modules` | GET | Dashboard module availability metadata |
 | `GET /api/dashboard/status` | GET | Mode-specific dashboard status |
 
 #### Legacy Endpoints (pre-dashboard API)
@@ -205,11 +210,27 @@ DashboardSnapshot
 │   └── members: MemberSnapshot[]
 ├── singles: SingleSnapshot[]
 ├── vwap_monitor: VWAPMonitorEntry[]
-└── signal_a: SignalAMonitorSnapshot
+├── signal_a: SignalAMonitorSnapshot
     ├── preparing: PreparingEntry[]
     ├── entered: ActivePosition[]
     ├── exited: CompletedTrade[]
     └── counters: SignalCounters
+├── signal_b: SignalBMonitorSnapshot
+    ├── rows: SignalBMonitorEntry[]
+    ├── buffer_zone: int
+    ├── trade_zone: int
+    ├── triggered: int
+    └── forbidden: int
+└── signal_day_high: SignalDayHighMonitorSnapshot
+    ├── rows: SignalDayHighMonitorEntry[]
+    ├── preparing: PreparingEntry[]
+    ├── entered: ActivePosition[]
+    ├── exited: CompletedTrade[]
+    ├── counters: SignalCounters
+    ├── tracking: int
+    ├── pullback: int
+    ├── triggered: int
+    └── entries: int
 ```
 
 ### Key Data Types
@@ -223,7 +244,7 @@ DashboardSnapshot
 | `PreparingEntry` | Near VWAP, awaiting entry | `symbol`, `order_price`, `distance_pct`, `stop_loss` |
 | `ActivePosition` | Open position | `symbol`, `entry_price`, `current_price`, `pnl_pct`, `stop_loss`, `take_profit` |
 | `CompletedTrade` | Closed trade | `symbol`, `entry_price`, `exit_price`, `pnl_pct`, `exit_cause` |
-| `SignalCounters` | Summary bar | `qualified`, `holding`, `take_profit`, `stop_loss`, `forbidden` |
+| `SignalCounters` | Summary bar | `qualified`, `not_qualified`, `holding`, `take_profit`, `stop_loss`, `forbidden` |
 
 ### Snapshot Building
 
@@ -235,6 +256,8 @@ DashboardSnapshot
 - `pos.open_trades` → `signal_a.entered[]`
 - `completed_trades[]` → `signal_a.exited[]`
 - Aggregated counters → `signal_a.counters`
+- `signal_b_map[]` + holdings → `signal_b.rows` and `signal_b counters`
+- `signal_day_high_map[]` + holdings and completed trades → `signal_day_high.rows`, `preparing`, `entered`, `exited`, `counters`
 
 ---
 
@@ -248,9 +271,12 @@ DashboardSnapshot
 ```
 dashboard/src/
 ├── App.tsx                         # Router: / → MarketOverview, /signal-a → SignalAMonitor
+                                      # /signal-a-short → SignalAShortMonitor, /day-high → DayHighMonitor
 ├── pages/
 │   ├── MarketOverview.tsx          # Groups + Singles + VWAP monitoring
 │   └── SignalAMonitor.tsx          # Signal A lifecycle tracking
+│   ├── SignalAShortMonitor.tsx      # SignalAShort lifecycle tracking
+│   └── DayHighMonitor.tsx           # DayHigh lifecycle + compact table
 ├── components/
 │   ├── groups/                     # GroupGrid, GroupCard
 │   ├── singles/                    # Singles table
@@ -294,6 +320,9 @@ export const api = {
   singles:      () => fetchJSON<{singles: SingleSnapshot[]}>('/api/dashboard/singles'),
   vwap:         () => fetchJSON<{vwap: VWAPMonitorEntry[]}>('/api/dashboard/vwap'),
   signalA:      () => fetchJSON<SignalAMonitorSnapshot>('/api/dashboard/signal-a'),
+  signalB:      () => fetchJSON<SignalBMonitorSnapshot>('/api/dashboard/signal-b'),
+  signalDayHigh: () => fetchJSON<SignalDayHighMonitorSnapshot>('/api/dashboard/signal-day-high'),
+  modules:      () => fetchJSON<{ modules: DashboardModuleStatus[] }>('/api/dashboard/modules'),
   replayStatus: () => fetchJSON<ReplayStatusResponse>('/api/replay/status'),
   replayJump:   (time: string) => fetch('/api/replay/jump', {...}),
 }
@@ -380,6 +409,12 @@ curl http://localhost:8000/api/dashboard/groups
 # Get Signal A monitor
 curl http://localhost:8000/api/dashboard/signal-a
 
+# Get SignalDayHigh monitor
+curl http://localhost:8000/api/dashboard/signal-day-high
+
+# Get module availability metadata
+curl http://localhost:8000/api/dashboard/modules
+
 # Time-travel in replay mode
 curl -X POST http://localhost:8000/api/replay/jump \
   -H 'Content-Type: application/json' \
@@ -402,6 +437,8 @@ uv run python -m tw_signal_engine.cli.run_server --date 20260129 --mode replay &
 curl -s http://localhost:8000/api/status | python -m json.tool
 curl -s http://localhost:8000/api/dashboard/groups | python -m json.tool
 curl -s http://localhost:8000/api/dashboard/signal-a | python -m json.tool
+curl -s http://localhost:8000/api/dashboard/signal-day-high | python -m json.tool
+curl -s http://localhost:8000/api/dashboard/modules | python -m json.tool
 
 # Test replay jump
 curl -s -X POST http://localhost:8000/api/replay/jump \
@@ -492,6 +529,9 @@ The dashboard data should match the engine's CSV output:
 | `dashboard/src/types/dashboard.ts` | TypeScript interfaces (mirrors Python dataclasses) |
 | `dashboard/src/pages/MarketOverview.tsx` | Groups + singles + VWAP page |
 | `dashboard/src/pages/SignalAMonitor.tsx` | Signal A lifecycle page |
+| `dashboard/src/pages/SignalAShortMonitor.tsx` | SignalAShort lifecycle page |
+| `dashboard/src/pages/DayHighMonitor.tsx` | DayHigh lifecycle + compact table page |
+| `dashboard/src/components/signal/SignalMonitorLayout.tsx` | Shared lifecycle layout used by Signal A/SignalAShort/DayHigh |
 | `dashboard/src/components/groups/` | Group grid and card components |
 | `dashboard/src/components/signal/` | Preparing, active, exited card components |
 | `dashboard/src/components/vwap/` | VWAP monitoring table |

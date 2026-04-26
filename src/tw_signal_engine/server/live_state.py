@@ -12,6 +12,8 @@ from tw_signal_engine.replay.session_hooks import SessionHooks
 from tw_signal_engine.server.dashboard_snapshot import (
     DashboardSnapshot,
     SignalAMonitorSnapshot,
+    SignalBMonitorSnapshot,
+    SignalDayHighMonitorSnapshot,
 )
 from tw_signal_engine.state.symbol_state import IndexData
 
@@ -190,6 +192,24 @@ class LiveState:
             if self._dashboard_snapshot is None:
                 return asdict(SignalAMonitorSnapshot())
             return asdict(self._dashboard_snapshot.signal_a)
+
+    def get_dashboard_signal_b(self) -> dict[str, Any]:
+        with self._lock:
+            if self._dashboard_snapshot is None:
+                return asdict(SignalBMonitorSnapshot())
+            return asdict(self._dashboard_snapshot.signal_b)
+
+    def get_dashboard_signal_day_high(self) -> dict[str, Any]:
+        with self._lock:
+            if self._dashboard_snapshot is None:
+                return asdict(SignalDayHighMonitorSnapshot())
+            return asdict(self._dashboard_snapshot.signal_day_high)
+
+    def get_dashboard_modules(self) -> list[dict[str, Any]]:
+        with self._lock:
+            if self._dashboard_snapshot is None:
+                return []
+            return [asdict(m) for m in self._dashboard_snapshot.modules]
 
     def get_dashboard_snapshot_dict(self) -> dict[str, Any] | None:
         with self._lock:

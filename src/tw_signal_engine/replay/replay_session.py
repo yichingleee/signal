@@ -52,10 +52,15 @@ from tw_signal_engine.screening.evaluate_strong_single import StrongSingleEvalua
 from tw_signal_engine.server.dashboard_snapshot import (
     ActivePosition,
     CompletedTrade,
+    DashboardModuleStatus,
     DashboardSnapshot,
     PreparingEntry,
     SignalAMonitorSnapshot,
+    SignalBMonitorEntry,
+    SignalBMonitorSnapshot,
     SignalCounters,
+    SignalDayHighMonitorEntry,
+    SignalDayHighMonitorSnapshot,
     VWAPMonitorEntry,
 )
 from tw_signal_engine.signals.evaluate_signal_a import evaluate_signal_a
@@ -331,6 +336,8 @@ def _build_dashboard_snapshot(
     last_price: dict[str, int],
     signal_a_map: dict[str, SignalAState],
     signal_a_short_map: dict[str, SignalAState],
+    signal_b_map: dict[str, SignalBState],
+    signal_day_high_map: dict[str, SignalDayHighState],
     pos: PositionState,
     completed_trades: list[TradeRecord],
     trade_mode: str,
@@ -511,6 +518,327 @@ def _build_dashboard_snapshot(
         counters=counters,
     )
 
+    signal_b_rows: list[SignalBMonitorEntry] = []
+    signal_b_symbols: set[str] = set()
+    for symbol, signal_b_state in signal_b_map.items():
+        if not (
+            signal_b_state.forbidden
+            or signal_b_state.in_buffer_zone
+            or signal_b_state.in_trade_zone
+            or signal_b_state.enter_market
+        ):
+            continue
+        ref = f1_map.get(symbol)
+        name = getattr(ref, "name", symbol)
+        group_name = symbol_to_group.get(symbol, "")
+        status = (
+            "triggered"
+            if signal_b_state.enter_market
+            else "trade_zone"
+            if signal_b_state.in_trade_zone
+            else "buffer_zone"
+            if signal_b_state.in_buffer_zone
+            else "forbidden"
+        )
+        signal_b_rows.append(
+            SignalBMonitorEntry(
+                symbol=symbol,
+                name=name,
+                group_name=group_name,
+                forbidden=signal_b_state.forbidden,
+                in_buffer_zone=signal_b_state.in_buffer_zone,
+                in_trade_zone=signal_b_state.in_trade_zone,
+                enter_market=signal_b_state.enter_market,
+                rolling_low=signal_b_state.rolling_low_val / 10000
+                if signal_b_state.rolling_low_val > 0
+                else 0.0,
+                rolling_sum_ratio=signal_b_state.rolling_sum_ratio,
+                status=status,
+            )
+        )
+        signal_b_symbols.add(symbol)
+    for symbol, entry in pos.open_trades.items():
+        if entry.signal_type != "SignalB" or symbol in signal_b_symbols:
+            continue
+        signal_b_open_state: SignalBState | None = signal_b_map.get(symbol)
+        ref = f1_map.get(symbol)
+        name = getattr(ref, "name", symbol)
+        signal_b_rows.append(
+            SignalBMonitorEntry(
+                symbol=symbol,
+                name=name,
+                group_name=entry.group_name,
+                enter_market=True,
+                rolling_low=(
+                    signal_b_open_state.rolling_low_val / 10000
+                    if signal_b_open_state and signal_b_open_state.rolling_low_val > 0
+                    else 0.0
+                ),
+                rolling_sum_ratio=(signal_b_open_state.rolling_sum_ratio if signal_b_open_state else 0.0),
+                status="holding",
+            )
+        )
+    signal_b_snapshot = SignalBMonitorSnapshot(
+        rows=signal_b_rows,
+        buffer_zone=sum(1 for row in signal_b_rows if row.in_buffer_zone),
+        trade_zone=sum(1 for row in signal_b_rows if row.in_trade_zone),
+        triggered=sum(1 for row in signal_b_rows if row.enter_market),
+        forbidden=sum(1 for row in signal_b_rows if row.forbidden),
+    )
+
+    day_high_rows: list[SignalDayHighMonitorEntry] = []
+    day_high_symbols: set[str] = set()
+    day_high_open_symbols: set[str] = {
+        symbol for symbol, entry in pos.open_trades.items() if entry.signal_type == "SignalDayHigh"
+    }
+    day_high_preparing: list[PreparingEntry] = []
+    for symbol, day_high_state in signal_day_high_map.items():
+        if not (
+            day_high_state.pullback_confirmed
+            or day_high_state.triggered
+            or day_high_state.entries > 0
+        ):
+            continue
+        ref = f1_map.get(symbol)
+        name = getattr(ref, "name", symbol)
+        group_name = symbol_to_group.get(symbol, "")
+        status = (
+            "triggered"
+            if day_high_state.triggered
+            else "pullback"
+            if day_high_state.pullback_confirmed
+            else "tracking"
+        )
+        day_high_rows.append(
+            SignalDayHighMonitorEntry(
+                symbol=symbol,
+                name=name,
+                group_name=group_name,
+                triggered=day_high_state.triggered,
+                established_high=(
+                    day_high_state.established_high / 10000
+                    if day_high_state.established_high > 0
+                    else 0.0
+                ),
+                established_high_time=(
+                    str(day_high_state.established_high_time)
+                    if day_high_state.established_high_time > 0
+                    else ""
+                ),
+                pullback_confirmed=day_high_state.pullback_confirmed,
+                pullback_low=(
+                    day_high_state.pullback_low / 10000
+                    if day_high_state.pullback_low > 0
+                    else 0.0
+                ),
+                pullback_time=(
+                    str(day_high_state.pullback_time)
+                    if day_high_state.pullback_time > 0
+                    else ""
+                ),
+                entries=day_high_state.entries,
+                status=status,
+            )
+        )
+        day_high_symbols.add(symbol)
+
+        if (day_high_state.pullback_confirmed or day_high_state.triggered) and symbol not in day_high_open_symbols:
+            idx_for_symbol = latest_idx_map.get(symbol)
+            if idx_for_symbol is not None:
+                price_raw = last_price.get(symbol, 0)
+                current_price = price_raw / 10000
+                established_high = (
+                    day_high_state.established_high / 10000
+                    if day_high_state.established_high > 0
+                    else current_price
+                )
+                day_high_preparing.append(
+                    PreparingEntry(
+                        symbol=symbol,
+                        name=name,
+                        group_name=group_name,
+                        group_tag=group_name,
+                        order_price=established_high,
+                        current_price=current_price,
+                        distance_pct=(
+                            (current_price - established_high) / established_high
+                            if established_high > 0
+                            else 0.0
+                        ),
+                        vwap=idx_for_symbol.vwap / 10000,
+                        day_low=idx_for_symbol.day_low / 10000 if idx_for_symbol.day_low > 0 else 0.0,
+                        stop_loss=0.0,
+                        near_vwap_pv_ratio=0.0,
+                        side="long",
+                    )
+                )
+
+    day_high_entered: list[ActivePosition] = []
+    for symbol, entry in pos.open_trades.items():
+        if entry.signal_type != "SignalDayHigh":
+            continue
+        price_raw = last_price.get(symbol, 0)
+        if entry.entry_price > 0:
+            if entry.side == "short":
+                pnl_pct = (entry.entry_price - price_raw / 10000) / entry.entry_price
+            else:
+                pnl_pct = (price_raw / 10000 - entry.entry_price) / entry.entry_price
+        else:
+            pnl_pct = 0.0
+        ref = f1_map.get(symbol)
+        name = getattr(ref, "name", symbol)
+        day_high_entered.append(
+            ActivePosition(
+                symbol=symbol,
+                name=name,
+                group_name=entry.group_name,
+                group_tag=entry.group_name,
+                entry_price=entry.entry_price,
+                current_price=price_raw / 10000,
+                pnl_pct=pnl_pct,
+                stop_loss=0.0,
+                take_profit=0.0,
+                day_high=entry.day_high_at_entry,
+                entry_time=str(entry.entry_time_raw),
+                side=entry.side,
+                qty=pos.stocks.get(symbol, 0),
+            )
+        )
+
+    day_high_exited: list[CompletedTrade] = []
+    for trade in completed_trades[-200:]:
+        if trade.signal_type != "SignalDayHigh":
+            continue
+        ref = f1_map.get(trade.symbol)
+        name = getattr(ref, "name", trade.symbol)
+        day_high_exited.append(
+            CompletedTrade(
+                symbol=trade.symbol,
+                name=name,
+                group_name=trade.group_name,
+                group_tag=trade.group_name,
+                entry_price=trade.entry_price,
+                exit_price=trade.exit_price,
+                pnl_pct=trade.return_pct / 100.0,
+                entry_time=str(trade.entry_time_raw),
+                exit_time=str(trade.exit_time_raw),
+                exit_cause=trade.final_leave_cause,
+                side=trade.side,
+            )
+        )
+
+    day_high_counters = SignalCounters(
+        qualified=len(day_high_preparing),
+        not_qualified=0,
+        holding=len(day_high_entered),
+        take_profit=sum(1 for trade in day_high_exited if trade.exit_cause == "takeProfit"),
+        stop_loss=sum(1 for trade in day_high_exited if trade.exit_cause == "stopLoss"),
+        forbidden=0,
+    )
+    for symbol, entry in pos.open_trades.items():
+        if entry.signal_type != "SignalDayHigh" or symbol in day_high_symbols:
+            continue
+        day_high_open_state: SignalDayHighState | None = signal_day_high_map.get(symbol)
+        ref = f1_map.get(symbol)
+        name = getattr(ref, "name", symbol)
+        day_high_rows.append(
+            SignalDayHighMonitorEntry(
+                symbol=symbol,
+                name=name,
+                group_name=entry.group_name,
+                triggered=True,
+                established_high=(
+                    day_high_open_state.established_high / 10000
+                    if day_high_open_state and day_high_open_state.established_high > 0
+                    else entry.day_high_at_entry
+                ),
+                pullback_low=(
+                    day_high_open_state.pullback_low / 10000
+                    if day_high_open_state and day_high_open_state.pullback_low > 0
+                    else 0.0
+                ),
+                entries=(day_high_open_state.entries if day_high_open_state else 1),
+                status="holding",
+            )
+        )
+    day_high_snapshot = SignalDayHighMonitorSnapshot(
+        rows=day_high_rows,
+        preparing=day_high_preparing,
+        entered=day_high_entered,
+        exited=day_high_exited,
+        counters=day_high_counters,
+        tracking=sum(1 for state in signal_day_high_map.values() if state.established_high > 0),
+        pullback=sum(1 for row in day_high_rows if row.status == "pullback"),
+        triggered=sum(1 for row in day_high_rows if row.status in {"triggered", "holding"}),
+        entries=sum(row.entries for row in day_high_rows),
+    )
+
+    modules = [
+        DashboardModuleStatus(
+            "strong-groups",
+            "Strong Groups",
+            "available",
+            "",
+            "StockScreening strong groups",
+        ),
+        DashboardModuleStatus(
+            "burst-groups",
+            "Burst Groups",
+            "unavailable",
+            "This engine has no burst-group evaluator.",
+            "StockScreening burst groups",
+        ),
+        DashboardModuleStatus(
+            "intraday-burst",
+            "Intraday Burst Stocks",
+            "unavailable",
+            "This engine has no intraday burst-stock evaluator.",
+            "StockScreening intraday burst stocks",
+        ),
+        DashboardModuleStatus(
+            "strong-stocks",
+            "Strong Stocks",
+            "available",
+            "",
+            "StockScreening strong stocks",
+        ),
+        DashboardModuleStatus(
+            "vwap-watchlist",
+            "VWAP Watchlist",
+            "available",
+            "",
+            "StockScreening VWAP watchlist",
+        ),
+        DashboardModuleStatus(
+            "signal-a-family",
+            "Signal A / SignalAShort",
+            "available",
+            "",
+            "signal SignalA and SignalAShort",
+        ),
+        DashboardModuleStatus(
+            "signal-b",
+            "Signal B",
+            "available",
+            "",
+            "signal SignalB",
+        ),
+        DashboardModuleStatus(
+            "signal-c-summary",
+            "Signal C Summary",
+            "unavailable",
+            "Signal C is not implemented in this engine.",
+            "StockScreening Signal C",
+        ),
+        DashboardModuleStatus(
+            "day-high-summary",
+            "SignalDayHigh",
+            "available",
+            "",
+            "signal SignalDayHigh",
+        ),
+    ]
+
     return DashboardSnapshot(
         timestamp=_format_match_time(match_time_str),
         time_raw=match_time_str,
@@ -519,6 +847,9 @@ def _build_dashboard_snapshot(
         singles=strong_single.to_snapshot(latest_idx_map, last_price, symbol_to_group=symbol_to_group),
         vwap_monitor=vwap_rows,
         signal_a=signal_a_snapshot,
+        signal_b=signal_b_snapshot,
+        signal_day_high=day_high_snapshot,
+        modules=modules,
     )
 
 
@@ -850,6 +1181,8 @@ def run_daily_replay(
                 last_price=last_price,
                 signal_a_map=signal_a_map,
                 signal_a_short_map=signal_a_short_map,
+                signal_b_map=signal_b_map,
+                signal_day_high_map=signal_day_high_map,
                 pos=pos,
                 completed_trades=completed_trades,
                 trade_mode=config.strategy.trade_mode,

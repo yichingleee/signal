@@ -3,8 +3,12 @@ import { api } from '../api/client'
 import { getSocket, disconnectSocket } from '../api/socket'
 import type {
   DashboardSnapshot,
+  DashboardModuleStatus,
   ReplayStatusResponse,
   SignalAMonitorSnapshot,
+  SignalBMonitorSnapshot,
+  SignalCounters,
+  SignalDayHighMonitorSnapshot,
 } from '../types/dashboard'
 
 function hhmmToMinutes(hhmm: string): number {
@@ -16,6 +20,54 @@ function minutesToHHMM(minutes: number): string {
   const h = Math.floor(minutes / 60)
   const m = minutes % 60
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
+}
+
+const DEFAULT_MODULES: DashboardModuleStatus[] = [
+  { key: 'strong-groups', label: 'Strong Groups', availability: 'available', reason: '', source_equivalent: 'StockScreening strong groups' },
+  { key: 'burst-groups', label: 'Burst Groups', availability: 'unavailable', reason: 'This engine has no burst-group evaluator.', source_equivalent: 'StockScreening burst groups' },
+  { key: 'intraday-burst', label: 'Intraday Burst Stocks', availability: 'unavailable', reason: 'This engine has no intraday burst-stock evaluator.', source_equivalent: 'StockScreening intraday burst stocks' },
+  { key: 'strong-stocks', label: 'Strong Stocks', availability: 'available', reason: '', source_equivalent: 'StockScreening strong stocks' },
+  { key: 'vwap-watchlist', label: 'VWAP Watchlist', availability: 'available', reason: '', source_equivalent: 'StockScreening VWAP watchlist' },
+  { key: 'signal-a-family', label: 'Signal A / SignalAShort', availability: 'available', reason: '', source_equivalent: 'signal SignalA and SignalAShort' },
+  { key: 'signal-b', label: 'Signal B', availability: 'available', reason: '', source_equivalent: 'signal SignalB' },
+  { key: 'signal-c-summary', label: 'Signal C Summary', availability: 'unavailable', reason: 'Signal C is not implemented in this engine.', source_equivalent: 'StockScreening Signal C' },
+  { key: 'day-high-summary', label: 'SignalDayHigh', availability: 'available', reason: '', source_equivalent: 'signal SignalDayHigh' },
+]
+
+const EMPTY_SIGNAL_COUNTERS: SignalCounters = {
+  qualified: 0,
+  not_qualified: 0,
+  holding: 0,
+  take_profit: 0,
+  stop_loss: 0,
+  forbidden: 0,
+}
+
+function normalizeSignalDayHighSnapshot(raw: unknown): SignalDayHighMonitorSnapshot {
+  const source =
+    raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : null
+  const rows = Array.isArray(source?.rows) ? source.rows : []
+  const preparing = Array.isArray(source?.preparing) ? source.preparing : []
+  const entered = Array.isArray(source?.entered) ? source.entered : []
+  const exited = Array.isArray(source?.exited) ? source.exited : []
+  const counters =
+    source?.counters && typeof source.counters === 'object' && !Array.isArray(source.counters)
+      ? (source.counters as SignalCounters)
+      : EMPTY_SIGNAL_COUNTERS
+
+  return {
+    rows,
+    preparing,
+    entered,
+    exited,
+    counters,
+    tracking: typeof source?.tracking === 'number' ? source.tracking : 0,
+    pullback: typeof source?.pullback === 'number' ? source.pullback : 0,
+    triggered: typeof source?.triggered === 'number' ? source.triggered : 0,
+    entries: typeof source?.entries === 'number' ? source.entries : 0,
+  }
 }
 
 function normalizeReplaySnapshot(payload: unknown): DashboardSnapshot | null {
@@ -48,6 +100,23 @@ function normalizeReplaySnapshot(payload: unknown): DashboardSnapshot | null {
             exited: [],
             counters: { qualified: 0, not_qualified: 0, holding: 0, take_profit: 0, stop_loss: 0, forbidden: 0 },
           }
+  const signalB: SignalBMonitorSnapshot =
+    row.signal_b && typeof row.signal_b === 'object'
+      ? (row.signal_b as SignalBMonitorSnapshot)
+      : row.dashboard_signal_b && typeof row.dashboard_signal_b === 'object'
+        ? (row.dashboard_signal_b as SignalBMonitorSnapshot)
+        : { rows: [], buffer_zone: 0, trade_zone: 0, triggered: 0, forbidden: 0 }
+  const signalDayHigh: SignalDayHighMonitorSnapshot =
+    normalizeSignalDayHighSnapshot(
+      row.signal_day_high && typeof row.signal_day_high === 'object'
+        ? row.signal_day_high
+        : row.dashboard_signal_day_high,
+    )
+  const modules: DashboardModuleStatus[] = Array.isArray(row.modules)
+    ? (row.modules as DashboardModuleStatus[])
+    : Array.isArray(row.dashboard_modules)
+      ? (row.dashboard_modules as DashboardModuleStatus[])
+      : DEFAULT_MODULES
 
   const timestamp = typeof row.market_time === 'string'
     ? row.market_time
@@ -63,6 +132,9 @@ function normalizeReplaySnapshot(payload: unknown): DashboardSnapshot | null {
     singles,
     vwap_monitor: vwapMonitor,
     signal_a: signalA,
+    signal_b: signalB,
+    signal_day_high: signalDayHigh,
+    modules,
   }
 }
 
@@ -104,11 +176,14 @@ export function useDashboardData(): DashboardData {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [groupsRes, singlesRes, vwapRes, signalARes] = await Promise.all([
+      const [groupsRes, singlesRes, vwapRes, signalARes, signalBRes, signalDayHighRes, modulesRes] = await Promise.all([
         api.groups(),
         api.singles(),
         api.vwap(),
         api.signalA(),
+        api.signalB(),
+        api.signalDayHigh(),
+        api.modules(),
       ])
       const now = new Date().toLocaleTimeString('zh-TW')
       setSnapshot((prev) => ({
@@ -119,6 +194,9 @@ export function useDashboardData(): DashboardData {
         singles: singlesRes.singles,
         vwap_monitor: vwapRes.vwap,
         signal_a: signalARes,
+        signal_b: signalBRes,
+        signal_day_high: signalDayHighRes,
+        modules: modulesRes.modules,
       }))
       setLastUpdate(now)
       setError(null)
@@ -191,12 +269,17 @@ export function useDashboardData(): DashboardData {
     }
 
     // Live mode: socket push + polling fallback.
-    const socket = getSocket()
+      const socket = getSocket()
     setConnected(socket.connected)
     socket.on('connect', () => setConnected(true))
     socket.on('disconnect', () => setConnected(false))
-    socket.on('dashboard:snapshot', (data: DashboardSnapshot) => {
-      setSnapshot(data)
+      socket.on('dashboard:snapshot', (data: DashboardSnapshot) => {
+      setSnapshot({
+        ...data,
+        signal_b: data.signal_b ?? { rows: [], buffer_zone: 0, trade_zone: 0, triggered: 0, forbidden: 0 },
+        signal_day_high: normalizeSignalDayHighSnapshot(data.signal_day_high),
+        modules: data.modules ?? DEFAULT_MODULES,
+      })
       setLastUpdate(data.timestamp)
       setError(null)
       lastReceiveAtRef.current = Date.now()

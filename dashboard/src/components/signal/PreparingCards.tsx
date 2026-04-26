@@ -17,6 +17,7 @@ export function PreparingCards({ entries }: { entries: PreparingEntry[] }) {
               <span className="symbol">{e.symbol}</span>
               <span className="name">{e.name}</span>
               <span className="tag">{e.group_tag}</span>
+              <span className={`tag ${e.side === 'short' ? 'short-side' : 'long-side'}`}>{e.side ?? 'long'}</span>
             </div>
             <div className="signal-card-body">
               <div>

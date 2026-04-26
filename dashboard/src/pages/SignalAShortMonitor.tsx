@@ -7,26 +7,26 @@ interface Props {
   lastUpdate: string
 }
 
-export function SignalAMonitor({ snapshot, lastUpdate }: Props) {
+export function SignalAShortMonitor({ snapshot, lastUpdate }: Props) {
   if (!snapshot) {
     return (
       <main className="page-content">
-        <div className="section-title">Signal A 監測</div>
+        <div className="section-title">SignalAShort 監測</div>
         <div className="empty-state">Waiting for data...</div>
       </main>
     )
   }
 
-  const longSnapshot = createSideSnapshot(snapshot.signal_a, 'long')
+  const shortSnapshot = createSideSnapshot(snapshot.signal_a, 'short')
 
   return (
     <SignalMonitorLayout
-      title="Signal A 監測"
+      title="SignalAShort 監測"
       lastUpdate={lastUpdate}
-      preparing={longSnapshot.preparing}
-      entered={longSnapshot.entered}
-      exited={longSnapshot.exited}
-      counters={longSnapshot.counters}
+      preparing={shortSnapshot.preparing}
+      entered={shortSnapshot.entered}
+      exited={shortSnapshot.exited}
+      counters={shortSnapshot.counters}
       monitorEntries={snapshot.vwap_monitor}
     />
   )

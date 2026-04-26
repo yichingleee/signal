@@ -30,6 +30,7 @@ export function ExitedCards({ trades }: { trades: CompletedTrade[] }) {
                 <span className="symbol">{t.symbol}</span>
                 <span className="name">{t.name}</span>
                 <span className="tag">{t.group_tag}</span>
+                <span className={`tag ${t.side === 'short' ? 'short-side' : 'long-side'}`}>{t.side ?? 'long'}</span>
               </div>
               <div className="signal-card-body">
                 <div>

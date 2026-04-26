@@ -3,6 +3,9 @@ import type {
   SingleSnapshot,
   VWAPMonitorEntry,
   SignalAMonitorSnapshot,
+  SignalBMonitorSnapshot,
+  SignalDayHighMonitorSnapshot,
+  DashboardModuleStatus,
   StatusResponse,
   ReplayStatusResponse,
 } from '../types/dashboard'
@@ -27,6 +30,15 @@ export const api = {
 
   signalA: () =>
     fetchJSON<SignalAMonitorSnapshot>('/api/dashboard/signal-a'),
+
+  signalB: () =>
+    fetchJSON<SignalBMonitorSnapshot>('/api/dashboard/signal-b'),
+
+  signalDayHigh: () =>
+    fetchJSON<SignalDayHighMonitorSnapshot>('/api/dashboard/signal-day-high'),
+
+  modules: () =>
+    fetchJSON<{ modules: DashboardModuleStatus[] }>('/api/dashboard/modules'),
 
   replayStatus: () =>
     fetchJSON<ReplayStatusResponse>('/api/replay/status'),

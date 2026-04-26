@@ -9,12 +9,22 @@ function pctColor(v: number): string {
 }
 
 function statusClass(status: string): string {
-  if (status === '持倉中') return 'status-badge holding'
-  if (status === '接近VWAP') return 'status-badge near-vwap'
+  if (status === '持倉中' || status === 'holding') return 'status-badge holding'
+  if (status === '接近VWAP' || status.includes('near_vwap')) return 'status-badge near-vwap'
   if (status.includes('停利')) return 'status-badge exited-profit'
   if (status.includes('停損')) return 'status-badge exited-loss'
-  if (status === '禁止') return 'status-badge forbidden'
+  if (status === '禁止' || status.includes('forbidden')) return 'status-badge forbidden'
   return 'status-badge'
+}
+
+function signalLabel(state: string): string {
+  if (state === 'triggered_short') return 'A Short triggered'
+  if (state === 'near_vwap_short') return 'A Short near'
+  if (state === 'forbidden_short') return 'A Short forbidden'
+  if (state === 'triggered') return 'A triggered'
+  if (state === 'near_vwap') return 'A near'
+  if (state === 'forbidden') return 'A forbidden'
+  return '-'
 }
 
 export function VWAPTable({ entries }: { entries: VWAPMonitorEntry[] }) {
@@ -34,6 +44,7 @@ export function VWAPTable({ entries }: { entries: VWAPMonitorEntry[] }) {
             <th className="text-right">VWAP</th>
             <th className="text-right">VWAP%</th>
             <th className="text-right">P/VWAP</th>
+            <th>signal</th>
             <th>status</th>
           </tr>
         </thead>
@@ -49,6 +60,11 @@ export function VWAPTable({ entries }: { entries: VWAPMonitorEntry[] }) {
                 {fmtPct(e.vwap_pct)}
               </td>
               <td className="text-right">{e.pv_ratio.toFixed(4)}</td>
+              <td>
+                <span className={statusClass(e.signal_a_state)}>
+                  {signalLabel(e.signal_a_state)}
+                </span>
+              </td>
               <td>
                 <span className={statusClass(e.status)}>
                   {e.status || '—'}

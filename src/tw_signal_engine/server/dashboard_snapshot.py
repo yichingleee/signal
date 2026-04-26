@@ -8,6 +8,7 @@ produce the same structures so the frontend is mode-agnostic.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from typing import Literal
 
 # ── Strong Group ──────────────────────────────────────────────────────────
 
@@ -154,6 +155,79 @@ class SignalAMonitorSnapshot:
     counters: SignalCounters = field(default_factory=SignalCounters)
 
 
+# ── Other signal-family monitors ─────────────────────────────────────────
+
+
+@dataclass(slots=True)
+class DashboardModuleStatus:
+    """Dashboard module availability for source-dashboard parity."""
+
+    key: str = ""
+    label: str = ""
+    availability: Literal["available", "unavailable"] = "available"
+    reason: str = ""
+    source_equivalent: str = ""
+
+
+@dataclass(slots=True)
+class SignalBMonitorEntry:
+    """Per-symbol Signal B state exposed to the dashboard."""
+
+    symbol: str = ""
+    name: str = ""
+    group_name: str = ""
+    forbidden: bool = False
+    in_buffer_zone: bool = False
+    in_trade_zone: bool = False
+    enter_market: bool = False
+    rolling_low: float = 0.0
+    rolling_sum_ratio: float = 0.0
+    status: str = ""
+
+
+@dataclass(slots=True)
+class SignalBMonitorSnapshot:
+    """Signal B dashboard summary."""
+
+    rows: list[SignalBMonitorEntry] = field(default_factory=list)
+    buffer_zone: int = 0
+    trade_zone: int = 0
+    triggered: int = 0
+    forbidden: int = 0
+
+
+@dataclass(slots=True)
+class SignalDayHighMonitorEntry:
+    """Per-symbol SignalDayHigh pullback/breakout state."""
+
+    symbol: str = ""
+    name: str = ""
+    group_name: str = ""
+    triggered: bool = False
+    established_high: float = 0.0
+    established_high_time: str = ""
+    pullback_confirmed: bool = False
+    pullback_low: float = 0.0
+    pullback_time: str = ""
+    entries: int = 0
+    status: str = ""
+
+
+@dataclass(slots=True)
+class SignalDayHighMonitorSnapshot:
+    """SignalDayHigh dashboard summary."""
+
+    rows: list[SignalDayHighMonitorEntry] = field(default_factory=list)
+    preparing: list[PreparingEntry] = field(default_factory=list)
+    entered: list[ActivePosition] = field(default_factory=list)
+    exited: list[CompletedTrade] = field(default_factory=list)
+    counters: SignalCounters = field(default_factory=SignalCounters)
+    tracking: int = 0
+    pullback: int = 0
+    triggered: int = 0
+    entries: int = 0
+
+
 # ── Top-level snapshot ────────────────────────────────────────────────────
 
 
@@ -169,6 +243,9 @@ class DashboardSnapshot:
     singles: list[SingleSnapshot] = field(default_factory=list)
     vwap_monitor: list[VWAPMonitorEntry] = field(default_factory=list)
     signal_a: SignalAMonitorSnapshot = field(default_factory=SignalAMonitorSnapshot)
+    signal_b: SignalBMonitorSnapshot = field(default_factory=SignalBMonitorSnapshot)
+    signal_day_high: SignalDayHighMonitorSnapshot = field(default_factory=SignalDayHighMonitorSnapshot)
+    modules: list[DashboardModuleStatus] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)

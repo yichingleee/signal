@@ -57,6 +57,7 @@ export interface PreparingEntry {
   day_low: number
   stop_loss: number
   near_vwap_pv_ratio: number
+  side?: 'long' | 'short'
 }
 
 export interface ActivePosition {
@@ -71,6 +72,8 @@ export interface ActivePosition {
   take_profit: number
   day_high: number
   entry_time: string
+  side?: 'long' | 'short'
+  qty?: number
 }
 
 export interface CompletedTrade {
@@ -84,6 +87,7 @@ export interface CompletedTrade {
   entry_time: string
   exit_time: string
   exit_cause: string
+  side?: 'long' | 'short'
 }
 
 export interface SignalCounters {
@@ -102,6 +106,61 @@ export interface SignalAMonitorSnapshot {
   counters: SignalCounters
 }
 
+export interface DashboardModuleStatus {
+  key: string
+  label: string
+  availability: 'available' | 'unavailable'
+  reason: string
+  source_equivalent: string
+}
+
+export interface SignalBMonitorEntry {
+  symbol: string
+  name: string
+  group_name: string
+  forbidden: boolean
+  in_buffer_zone: boolean
+  in_trade_zone: boolean
+  enter_market: boolean
+  rolling_low: number
+  rolling_sum_ratio: number
+  status: string
+}
+
+export interface SignalBMonitorSnapshot {
+  rows: SignalBMonitorEntry[]
+  buffer_zone: number
+  trade_zone: number
+  triggered: number
+  forbidden: number
+}
+
+export interface SignalDayHighMonitorEntry {
+  symbol: string
+  name: string
+  group_name: string
+  triggered: boolean
+  established_high: number
+  established_high_time: string
+  pullback_confirmed: boolean
+  pullback_low: number
+  pullback_time: string
+  entries: number
+  status: string
+}
+
+export interface SignalDayHighMonitorSnapshot {
+  rows: SignalDayHighMonitorEntry[]
+  preparing: PreparingEntry[]
+  entered: ActivePosition[]
+  exited: CompletedTrade[]
+  counters: SignalCounters
+  tracking: number
+  pullback: number
+  triggered: number
+  entries: number
+}
+
 export interface DashboardSnapshot {
   timestamp: string
   time_raw: number
@@ -110,6 +169,9 @@ export interface DashboardSnapshot {
   singles: SingleSnapshot[]
   vwap_monitor: VWAPMonitorEntry[]
   signal_a: SignalAMonitorSnapshot
+  signal_b: SignalBMonitorSnapshot
+  signal_day_high: SignalDayHighMonitorSnapshot
+  modules: DashboardModuleStatus[]
 }
 
 export interface StatusResponse {
