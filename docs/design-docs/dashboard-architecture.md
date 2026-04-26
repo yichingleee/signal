@@ -1,538 +1,158 @@
 # Dashboard Architecture
 
-This document describes the as-built architecture of the Dashboard UI system — the FastAPI backend, React frontend, dual-mode API pattern, WebSocket real-time push, and replay time-travel.
-
-**Related docs**:
-- Live data providers that feed the dashboard: [live-data-architecture.md](live-data-architecture.md)
-- Archived pre-implementation research: [../references/legacy/research/live-data-integration-research.md](../references/legacy/research/live-data-integration-research.md)
-
----
-
-## 1. System Overview
-
-The dashboard is a monitoring tool for the signal engine. It shows strong groups, strong singles, VWAP proximity, and signal lifecycles (Signal A, SignalAShort, SignalDayHigh) in real time.
-
-```
-┌─────────────────────────────────────────────────────┐
-│                  React SPA (dashboard/)              │
-│  MarketOverview  │  SignalAMonitor                   │
-│                  │  SignalAShortMonitor              │
-│                  │  DayHighMonitor                   │
-│  ─ GroupGrid     │  ─ PreparingCards                 │
-│  ─ SinglesTable  │  ─ ActiveCards                    │
-│  ─ VWAPTable     │  ─ ExitedCards + Counters         │
-└────────┬────────────────────┬────────────────────────┘
-         │ HTTP polling       │ WebSocket (Socket.IO)
-         ▼                    ▼
-┌─────────────────────────────────────────────────────┐
-│              FastAPI Backend (server/)                │
-│  /api/dashboard/{groups,singles,vwap,signal-a,signal-b,signal-day-high,modules} │
-│  /api/replay/{status,jump}                           │
-│  Socket.IO: dashboard:snapshot                       │
-└────────┬────────────────────┬────────────────────────┘
-         │                    │
-    ┌────▼────┐         ┌────▼─────────┐
-    │LiveState│         │ReplayManager │
-    │(thread- │         │(Parquet-     │
-    │ safe)   │         │ backed)      │
-    └────┬────┘         └──────────────┘
-         │
-    SessionHooks from replay_session.py
-```
-
-**Key idea**: The frontend is mode-agnostic. The same React components render data from either live or replay sources. The branching between modes happens entirely in the backend API handlers.
-
----
-
-## 2. Backend Architecture
-
-### 2.1 Dual-Mode API Pattern
-
-Every data endpoint follows the same pattern:
-
-```python
-@app.get("/api/dashboard/groups")
-def dashboard_groups():
-    if _server_mode == "live" and _live_state is not None:
-        return {"groups": _live_state.get_dashboard_groups()}
-    if _replay_manager is not None:
-        snapshot = _replay_manager.get_current_snapshot()
-        if snapshot and "dashboard_groups" in snapshot:
-            return {"groups": snapshot["dashboard_groups"]}
-    return {"groups": []}
-```
-
-- **Live mode**: reads from `LiveState` (thread-safe, updated by engine hooks)
-- **Replay mode**: reads from `ReplayManager` (Parquet-backed, time-travel via `jump_to_time`)
-- **Fallback**: returns empty data if neither source is available
-
-This means the frontend never needs to know which mode is active — it calls the same endpoints.
-
-### 2.2 API Endpoints
-
-**File**: `src/tw_signal_engine/server/app.py`
-
-#### Core Status
-
-| Endpoint | Method | Returns |
-|---|---|---|
-| `GET /api/status` | GET | `{mode, tick_count, last_time_str, ready, time_range}` |
-| `GET /api/config` | GET | `{mode}` |
-
-#### Dashboard V1 (used by React frontend)
-
-| Endpoint | Method | Returns |
-|---|---|---|
-| `GET /api/dashboard/groups` | GET | Strong group cards with ranked member tables |
-| `GET /api/dashboard/singles` | GET | Strong individual stocks |
-| `GET /api/dashboard/vwap` | GET | VWAP monitoring table for all universe symbols |
-| `GET /api/dashboard/signal-a` | GET | Signal A lifecycle: preparing, entered, exited, counters |
-| `GET /api/dashboard/signal-b` | GET | Signal B monitoring state and counters |
-| `GET /api/dashboard/signal-day-high` | GET | DayHigh monitoring: rows plus lifecycle cards (preparing/entered/exited/counters) |
-| `GET /api/dashboard/modules` | GET | Dashboard module availability metadata |
-| `GET /api/dashboard/status` | GET | Mode-specific dashboard status |
-
-#### Legacy Endpoints (pre-dashboard API)
-
-| Endpoint | Method | Returns |
-|---|---|---|
-| `GET /api/positions` | GET | Open positions with current P&L |
-| `GET /api/signals` | GET | Active + expired signal states |
-| `GET /api/screened-groups` | GET | Raw screening results |
-| `GET /api/trades` | GET | Completed trades |
-
-#### Replay Control
+This document describes the dashboard that is actually implemented in the repository today: the FastAPI server under `src/tw_signal_engine/server/` and the React SPA under `dashboard/`.
 
-| Endpoint | Method | Returns |
-|---|---|---|
-| `GET /api/replay/status` | GET | `{enabled, ready, time_range: {min_time, max_time, count}}` |
-| `POST /api/replay/jump` | POST | Body: `{"time": "10:30"}` → jumps to that minute's snapshot |
+Related docs:
+- Live data provider and session-hook design: [live-data-architecture.md](live-data-architecture.md)
+- Dashboard runtime prerequisites and operator gotchas: [../references/dashboard-operations.md](../references/dashboard-operations.md)
+- Top-level replay architecture: [runtime-architecture.md](runtime-architecture.md)
 
-### 2.3 LiveState — Thread-Safe State Holder
-
-**File**: `src/tw_signal_engine/server/live_state.py`
-
-The engine runs in a background thread. The API runs in the main asyncio thread. `LiveState` bridges them with `threading.Lock`:
-
-```
-Engine thread (background)                API thread (main, asyncio)
-    │                                         │
-    │  SessionHooks callbacks                 │  GET /api/dashboard/groups
-    │  ─ on_tick() → update prices            │  ─ live_state.get_dashboard_groups()
-    │  ─ on_entry() → add to active           │     ─ acquire lock
-    │  ─ on_exit() → move to completed        │     ─ read state
-    │  ─ on_dashboard_snapshot()              │     ─ release lock
-    │     → update _dashboard_snapshot        │
-    ▼                                         ▼
-         ┌──── threading.Lock ────┐
-         │     LiveState fields   │
-         └────────────────────────┘
-```
-
-**State tracked**:
-- `_tick_count`, `_last_time_str` — progress
-- `_last_prices[symbol]`, `_last_indices[symbol]` — per-symbol latest data
-- `_active_entries[symbol]` — open positions
-- `_completed_trades[]` — closed trades
-- `_recent_signals[]` — signal generation history
-- `_dashboard_snapshot` — latest minute-boundary dashboard snapshot (dict)
-- `_engine_status` — `"starting"`, `"running"`, `"stopped"`, `"fatal"`
-
-**Hooks wiring** (via `build_hooks()` method):
-- `on_tick` → increment tick count, update last prices
-- `on_entry` → populate `_active_entries`
-- `on_exit` → move from active to completed
-- `on_dashboard_snapshot` → store the full snapshot dict
-
-### 2.4 ReplayManager — Parquet Time-Travel
-
-**File**: `src/tw_signal_engine/server/replay_manager.py`
-
-Loads pre-computed Parquet snapshots (generated by `--snapshots` flag during batch replay) and serves them via the API.
-
-**Usage flow**:
-1. Generate snapshots: `uv run python -m tw_signal_engine.cli.run_daily_replay --date 20260129 --snapshots`
-2. Start server in replay mode: `uv run python -m tw_signal_engine.cli.run_server --date 20260129 --mode replay`
-3. Frontend loads, calls `GET /api/replay/status` to discover time range
-4. User clicks timeline or calls `POST /api/replay/jump {"time": "10:30"}` to time-travel
-
-**Key operations**:
-- `load()` → reads `ReplayData_{date}.parquet` into a DataFrame
-- `jump_to_time("10:30")` → binary search for snapshot at or before that minute
-- `get_current_snapshot()` → returns the last jumped-to snapshot
-- `get_time_range()` → returns `{min_time, max_time, count}` for the timeline
-
-### 2.5 WebSocket Real-Time Push
-
-**Protocol**: Socket.IO (via `python-socketio`)
-
-**Event**: `dashboard:snapshot` — emitted every ~1 second in live mode
-
-```python
-# server/app.py — background async task
-async def _push_dashboard_snapshot_loop():
-    while True:
-        await asyncio.sleep(1.0)
-        snapshot = _live_state.get_dashboard_snapshot_dict()
-        if snapshot and snapshot != last_emitted:
-            await sio.emit("dashboard:snapshot", snapshot)
-```
-
-**Dedup logic**: Tracks `(time_raw, tick_count)` tuple. Only emits when the snapshot actually changes (avoids flooding the frontend with identical data between minute boundaries).
-
-### 2.6 Static File Serving
-
-The React SPA build output (`dashboard/dist/`) is served as static files mounted at `/`. This is mounted **last** so API routes take precedence. React Router handles client-side navigation.
-
-```python
-_dashboard_dist = Path(__file__).resolve().parent.parent.parent.parent / "dashboard" / "dist"
-if _dashboard_dist.exists():
-    app.mount("/", StaticFiles(directory=str(_dashboard_dist), html=True), name="dashboard")
-```
-
----
-
-## 3. Data Models
-
-**Python side**: `src/tw_signal_engine/server/dashboard_snapshot.py`
-**TypeScript side**: `dashboard/src/types/dashboard.ts`
-
-The TypeScript interfaces mirror the Python dataclasses exactly.
-
-### DashboardSnapshot (top-level container)
-
-```
-DashboardSnapshot
-├── timestamp: str          # human-readable time
-├── time_raw: int           # match_time_str integer
-├── tick_count: int         # total ticks processed
-├── groups: GroupSnapshot[]
-│   └── members: MemberSnapshot[]
-├── singles: SingleSnapshot[]
-├── vwap_monitor: VWAPMonitorEntry[]
-├── signal_a: SignalAMonitorSnapshot
-    ├── preparing: PreparingEntry[]
-    ├── entered: ActivePosition[]
-    ├── exited: CompletedTrade[]
-    └── counters: SignalCounters
-├── signal_b: SignalBMonitorSnapshot
-    ├── rows: SignalBMonitorEntry[]
-    ├── buffer_zone: int
-    ├── trade_zone: int
-    ├── triggered: int
-    └── forbidden: int
-└── signal_day_high: SignalDayHighMonitorSnapshot
-    ├── rows: SignalDayHighMonitorEntry[]
-    ├── preparing: PreparingEntry[]
-    ├── entered: ActivePosition[]
-    ├── exited: CompletedTrade[]
-    ├── counters: SignalCounters
-    ├── tracking: int
-    ├── pullback: int
-    ├── triggered: int
-    └── entries: int
-```
-
-### Key Data Types
-
-| Type | Purpose | Key fields |
-|---|---|---|
-| `GroupSnapshot` | One strong group | `group_name`, `group_rank`, `avg_pct_chg`, `vol_ratio`, `members[]` |
-| `MemberSnapshot` | One stock in a group | `symbol`, `price`, `pct_chg`, `vwap`, `vwap_pct_chg`, `cum_vol_ratio` |
-| `SingleSnapshot` | Strong individual stock | `symbol`, `price`, `pct_chg`, `vwap`, `group_name` |
-| `VWAPMonitorEntry` | VWAP proximity tracking | `symbol`, `price`, `vwap`, `vwap_pct`, `signal_a_state` |
-| `PreparingEntry` | Near VWAP, awaiting entry | `symbol`, `order_price`, `distance_pct`, `stop_loss` |
-| `ActivePosition` | Open position | `symbol`, `entry_price`, `current_price`, `pnl_pct`, `stop_loss`, `take_profit` |
-| `CompletedTrade` | Closed trade | `symbol`, `entry_price`, `exit_price`, `pnl_pct`, `exit_cause` |
-| `SignalCounters` | Summary bar | `qualified`, `not_qualified`, `holding`, `take_profit`, `stop_loss`, `forbidden` |
-
-### Snapshot Building
-
-`DashboardSnapshot` is built inside `replay_session.py` at minute boundaries (function `_build_dashboard_snapshot()`). It reads from:
-
-- `StrongGroupEvaluator` state → `groups[]`
-- `StrongSingleEvaluator` state → `singles[]`
-- `signal_a_map[]` + latest prices → `vwap_monitor[]` + `signal_a.preparing[]`
-- `pos.open_trades` → `signal_a.entered[]`
-- `completed_trades[]` → `signal_a.exited[]`
-- Aggregated counters → `signal_a.counters`
-- `signal_b_map[]` + holdings → `signal_b.rows` and `signal_b counters`
-- `signal_day_high_map[]` + holdings and completed trades → `signal_day_high.rows`, `preparing`, `entered`, `exited`, `counters`
-
----
-
-## 4. Frontend Architecture
-
-**Framework**: React + TypeScript + Vite
-**Location**: `dashboard/`
-
-### 4.1 Component Structure
-
-```
-dashboard/src/
-├── App.tsx                         # Router: / → MarketOverview, /signal-a → SignalAMonitor
-                                      # /signal-a-short → SignalAShortMonitor, /day-high → DayHighMonitor
-├── pages/
-│   ├── MarketOverview.tsx          # Groups + Singles + VWAP monitoring
-│   └── SignalAMonitor.tsx          # Signal A lifecycle tracking
-│   ├── SignalAShortMonitor.tsx      # SignalAShort lifecycle tracking
-│   └── DayHighMonitor.tsx           # DayHigh lifecycle + compact table
-├── components/
-│   ├── groups/                     # GroupGrid, GroupCard
-│   ├── singles/                    # Singles table
-│   ├── vwap/                       # VWAP monitoring table
-│   ├── signal/                     # PreparingCards, ActiveCards, ExitedCards
-│   ├── replay/                     # Replay timeline controls
-│   └── layout/                     # Shared layout (nav, header)
-├── hooks/
-│   └── useDashboardData.ts         # Central data hook
-├── api/
-│   ├── client.ts                   # HTTP fetch wrapper
-│   └── socket.ts                   # Socket.IO client
-├── types/
-│   └── dashboard.ts                # TypeScript interfaces
-└── styles/                         # CSS
-```
-
-### 4.2 `useDashboardData` Hook
-
-**File**: `dashboard/src/hooks/useDashboardData.ts`
-
-This is the central state management hook. It:
-
-1. **Detects mode** on mount via `GET /api/status`
-2. **Live mode**: connects Socket.IO, listens for `dashboard:snapshot` events, with HTTP polling fallback (2s interval)
-3. **Replay mode**: uses HTTP polling + exposes `jumpToTime(hhmm)` for time-travel
-4. **Tracks staleness**: if no update received for >5 seconds in live mode, marks data as stale
-
-All page components consume this hook — they never fetch data directly.
-
-### 4.3 API Client
-
-**File**: `dashboard/src/api/client.ts`
-
-Minimal fetch wrapper with typed responses:
-
-```typescript
-export const api = {
-  status:       () => fetchJSON<StatusResponse>('/api/status'),
-  groups:       () => fetchJSON<{groups: GroupSnapshot[]}>('/api/dashboard/groups'),
-  singles:      () => fetchJSON<{singles: SingleSnapshot[]}>('/api/dashboard/singles'),
-  vwap:         () => fetchJSON<{vwap: VWAPMonitorEntry[]}>('/api/dashboard/vwap'),
-  signalA:      () => fetchJSON<SignalAMonitorSnapshot>('/api/dashboard/signal-a'),
-  signalB:      () => fetchJSON<SignalBMonitorSnapshot>('/api/dashboard/signal-b'),
-  signalDayHigh: () => fetchJSON<SignalDayHighMonitorSnapshot>('/api/dashboard/signal-day-high'),
-  modules:      () => fetchJSON<{ modules: DashboardModuleStatus[] }>('/api/dashboard/modules'),
-  replayStatus: () => fetchJSON<ReplayStatusResponse>('/api/replay/status'),
-  replayJump:   (time: string) => fetch('/api/replay/jump', {...}),
-}
-```
-
-### 4.4 Socket.IO Client
-
-**File**: `dashboard/src/api/socket.ts`
-
-- Lazy initialization (created on first use)
-- Transports: WebSocket first, falls back to polling
-- Single global instance (no per-component connections)
-- Event: `dashboard:snapshot` → full `DashboardSnapshot` object
-
----
-
-## 5. Usage Scenarios
-
-### 5.1 Live Monitoring (Production)
-
-During market hours, monitor the signal engine in real time:
-
-```bash
-# Start the server with live engine
-uv run python -m tw_signal_engine.cli.run_server \
-  --date $(date +%Y%m%d) \
-  --mode live \
-  --config exec/cfg/parameter.cfg \
-  --data-dir exec/data \
-  --files-dir exec/files \
-  --group-file exec/files/group.csv \
-  --port 8000
-```
-
-Open `http://localhost:8000` in a browser. The dashboard auto-detects live mode and connects via WebSocket for real-time updates.
-
-### 5.2 Paced Replay (Development/Demo)
-
-Replay a historical day with simulated timing for dashboard development:
-
-```bash
-# Start the server with paced file replay
-uv run python -m tw_signal_engine.cli.run_server \
-  --date 20260129 \
-  --mode live \
-  --paced --speed 60.0 \
-  --config exec/cfg/parameter.cfg \
-  --data-dir exec/data \
-  --files-dir exec/files \
-  --group-file exec/files/group.csv
-```
-
-This replays the day at 60× speed (~4.5 minutes) while serving the dashboard at `http://localhost:8000`. The frontend sees this as "live mode" (WebSocket updates flow in real time).
-
-### 5.3 Parquet Replay with Time-Travel
-
-Review a historical day with instant time-travel:
-
-```bash
-# Step 1: Generate Parquet snapshots (one-time per date)
-uv run python -m tw_signal_engine.cli.run_daily_replay \
-  --date 20260129 --snapshots \
-  --config exec/cfg/parameter.cfg \
-  --data-dir exec/data \
-  --files-dir exec/files \
-  --group-file exec/files/group.csv
-
-# Step 2: Start server in replay mode
-uv run python -m tw_signal_engine.cli.run_server \
-  --date 20260129 --mode replay --port 8000
-```
-
-Open `http://localhost:8000`. The replay timeline appears. Click any minute to jump instantly.
-
-### 5.4 API-Only Usage (No Browser)
-
-```bash
-# Check engine status
-curl http://localhost:8000/api/status
-
-# Get strong groups
-curl http://localhost:8000/api/dashboard/groups
-
-# Get Signal A monitor
-curl http://localhost:8000/api/dashboard/signal-a
-
-# Get SignalDayHigh monitor
-curl http://localhost:8000/api/dashboard/signal-day-high
-
-# Get module availability metadata
-curl http://localhost:8000/api/dashboard/modules
-
-# Time-travel in replay mode
-curl -X POST http://localhost:8000/api/replay/jump \
-  -H 'Content-Type: application/json' \
-  -d '{"time": "10:30"}'
-```
-
----
-
-## 6. Testing and Verification
-
-### 6.1 Backend Unit Tests
-
-**Start the server and hit endpoints**:
-
-```bash
-# Start server in replay mode (requires Parquet snapshots)
-uv run python -m tw_signal_engine.cli.run_server --date 20260129 --mode replay &
-
-# Verify API responses
-curl -s http://localhost:8000/api/status | python -m json.tool
-curl -s http://localhost:8000/api/dashboard/groups | python -m json.tool
-curl -s http://localhost:8000/api/dashboard/signal-a | python -m json.tool
-curl -s http://localhost:8000/api/dashboard/signal-day-high | python -m json.tool
-curl -s http://localhost:8000/api/dashboard/modules | python -m json.tool
-
-# Test replay jump
-curl -s -X POST http://localhost:8000/api/replay/jump \
-  -H 'Content-Type: application/json' \
-  -d '{"time": "10:00"}' | python -m json.tool
-```
-
-### 6.2 Frontend Development
-
-```bash
-cd dashboard
-npm install
-npm run dev    # Vite dev server with HMR at http://localhost:5173
-```
-
-The Vite dev server proxies `/api` to the backend (configure in `vite.config.ts`). This allows hot-reloading the frontend while the backend runs separately.
-
-### 6.3 Building for Production
-
-```bash
-cd dashboard
-npm run build  # Output to dashboard/dist/
-```
-
-The built SPA is served by FastAPI's `StaticFiles` mount — no separate web server needed.
-
-### 6.4 Verifying WebSocket Push
-
-```python
-# Quick Socket.IO test client
-import socketio
-
-sio = socketio.Client()
-
-@sio.on("dashboard:snapshot")
-def on_snapshot(data):
-    print(f"Snapshot: tick_count={data['tick_count']}, time={data['timestamp']}")
-    print(f"  Groups: {len(data.get('groups', []))}")
-    print(f"  Signal A entered: {len(data.get('signal_a', {}).get('entered', []))}")
-
-sio.connect("http://localhost:8000")
-sio.wait()
-```
-
-### 6.5 Verifying Data Consistency
-
-The dashboard data should match the engine's CSV output:
-
-1. Run a paced replay with the dashboard server
-2. After completion, compare:
-   - Dashboard's `signal_a.exited[]` → should match `report_trades.csv`
-   - Dashboard's `groups[]` at each minute → should match Parquet snapshots
-3. Run the same date as a batch replay and diff outputs
-
-### 6.6 Edge Cases to Test
-
-| Scenario | How to test | Expected |
-|---|---|---|
-| Server starts before engine ready | Start server, immediately hit API | `{"mode": "live", "tick_count": 0}`, empty dashboard |
-| Engine fatal error | Kill Redis while live engine running | `engine_status: "fatal"`, error message in API |
-| Replay with no Parquet file | Start replay mode without running `--snapshots` | `{"enabled": true, "ready": false}`, empty dashboard |
-| WebSocket disconnect | Reload browser page | Socket reconnects, data resumes |
-| Stale data | Stop engine, keep server running | Frontend shows stale indicator after 5s |
-| Multiple browser tabs | Open dashboard in 2+ tabs | All tabs receive WebSocket updates |
-
----
-
-## 7. File Map
-
-### Backend
-
-| File | Purpose |
-|---|---|
-| `src/tw_signal_engine/server/app.py` | FastAPI app, all routes, Socket.IO setup, static file mount |
-| `src/tw_signal_engine/server/live_state.py` | Thread-safe state holder for live mode |
-| `src/tw_signal_engine/server/replay_manager.py` | Parquet-backed time-travel for replay mode |
-| `src/tw_signal_engine/server/dashboard_snapshot.py` | Python dataclasses for dashboard data models |
-| `src/tw_signal_engine/cli/run_server.py` | Server CLI entry point |
-
-### Frontend
-
-| File | Purpose |
-|---|---|
-| `dashboard/src/App.tsx` | Router and top-level layout |
-| `dashboard/src/hooks/useDashboardData.ts` | Central data hook (WebSocket + HTTP polling) |
-| `dashboard/src/api/client.ts` | Typed HTTP API client |
-| `dashboard/src/api/socket.ts` | Socket.IO client wrapper |
-| `dashboard/src/types/dashboard.ts` | TypeScript interfaces (mirrors Python dataclasses) |
-| `dashboard/src/pages/MarketOverview.tsx` | Groups + singles + VWAP page |
-| `dashboard/src/pages/SignalAMonitor.tsx` | Signal A lifecycle page |
-| `dashboard/src/pages/SignalAShortMonitor.tsx` | SignalAShort lifecycle page |
-| `dashboard/src/pages/DayHighMonitor.tsx` | DayHigh lifecycle + compact table page |
-| `dashboard/src/components/signal/SignalMonitorLayout.tsx` | Shared lifecycle layout used by Signal A/SignalAShort/DayHigh |
-| `dashboard/src/components/groups/` | Group grid and card components |
-| `dashboard/src/components/signal/` | Preparing, active, exited card components |
-| `dashboard/src/components/vwap/` | VWAP monitoring table |
-| `dashboard/src/components/replay/` | Replay timeline controls |
+## 1. Scope and repo map
+
+The dashboard is a monitoring UI for engine state, not a control plane for strategy configuration. It surfaces strong groups, strong singles, VWAP proximity, Signal A, SignalAShort, Signal B, and SignalDayHigh state that is already produced by the Python engine.
+
+Primary implementation files:
+- Backend API and SPA mounting: `src/tw_signal_engine/server/app.py`
+- Thread-safe live bridge: `src/tw_signal_engine/server/live_state.py`
+- Canonical snapshot schema: `src/tw_signal_engine/server/dashboard_snapshot.py`
+- Frontend shell and routing: `dashboard/src/App.tsx`
+- Frontend data transport and mode switching: `dashboard/src/hooks/useDashboardData.ts`
+- Frontend shared types: `dashboard/src/types/dashboard.ts`
+
+## 2. Runtime model
+
+The backend exposes the same dashboard API surface in two modes.
+
+- `live`: `LiveState` is updated by engine session hooks and pushed to the UI over Socket.IO, with REST polling kept as a fallback.
+- `replay`: `ReplayManager` serves stored snapshots and the UI drives time travel with `POST /api/replay/jump`.
+
+The frontend is mode-aware for transport only. It does not maintain separate page trees for live and replay data.
+
+## 3. Backend responsibilities
+
+`src/tw_signal_engine/server/app.py` owns three dashboard-facing concerns.
+
+### 3.1 API surface
+
+The UI consumes these endpoints:
+- `GET /api/status`: discover current server mode and basic readiness.
+- `GET /api/dashboard/groups`: strong-group cards and ranked members.
+- `GET /api/dashboard/singles`: strong-stock table.
+- `GET /api/dashboard/vwap`: VWAP watchlist.
+- `GET /api/dashboard/signal-a`: Signal A and SignalAShort lifecycle data.
+- `GET /api/dashboard/signal-b`: Signal B monitor rows and counters.
+- `GET /api/dashboard/signal-day-high`: SignalDayHigh monitor rows and counters.
+- `GET /api/dashboard/modules`: module availability metadata used for parity placeholders.
+- `GET /api/dashboard/status`: dashboard-specific readiness metadata.
+- `GET /api/replay/status`: replay time range for the slider.
+- `POST /api/replay/jump`: return the snapshot at or before a requested minute.
+
+### 3.2 Live push path
+
+In live mode the server emits `dashboard:snapshot` over Socket.IO. The push loop deduplicates on snapshot identity before sending so the browser does not re-render identical data continuously between minute-boundary snapshot updates.
+
+### 3.3 Static serving
+
+If `dashboard/dist/` exists, FastAPI mounts it at `/` after registering API routes. This is why a missing frontend build produces a working API server with no dashboard UI.
+
+## 4. Snapshot contract
+
+`dashboard_snapshot.py` is the schema boundary between Python and TypeScript. `dashboard/src/types/dashboard.ts` mirrors that schema for the UI.
+
+The top-level snapshot contains:
+- `timestamp`, `time_raw`, `tick_count`
+- `groups`
+- `singles`
+- `vwap_monitor`
+- `signal_a`
+- `signal_b`
+- `signal_day_high`
+- `modules`
+
+Important design detail: the frontend also normalizes replay payloads that still use stored `dashboard_*` field names. That compatibility logic lives in `useDashboardData.ts`, which lets replay snapshots and live snapshots feed the same React components.
+
+## 5. Frontend structure
+
+The SPA is a small React 19 + TypeScript + Vite application.
+
+### 5.1 Application shell
+
+`dashboard/src/App.tsx` composes:
+- `Header`
+- `StatusBar`
+- route content via `react-router-dom`
+- `TimelineSlider` when the backend reports replay mode
+
+### 5.2 Route map
+
+The implemented routes are:
+- `/`: `MarketOverview`
+- `/signal-a`: `SignalAMonitor`
+- `/signal-a-short`: `SignalAShortMonitor`
+- `/day-high`: `DayHighMonitor`
+
+There is no dedicated Signal B route. Signal B is presented on the overview page as a monitored section.
+
+### 5.3 Overview page
+
+`dashboard/src/pages/MarketOverview.tsx` is the densest page in the UI.
+
+It renders:
+- strong groups via `GroupGrid`
+- strong stocks via `SinglesTable`
+- VWAP watchlist via `VWAPTable`
+- cross-signal summaries via `SignalSummary`
+- Signal B and SignalDayHigh tables inside collapsible sections
+- unavailable parity cards for burst groups, intraday burst stocks, and Signal C
+- toast notifications for `near_vwap`, Signal B `trade_zone` or `triggered`, and SignalDayHigh `pullback` or `triggered`
+
+Section open/closed state is persisted in browser `localStorage` under `tw-signal-dashboard-sections`.
+
+### 5.4 Signal lifecycle pages
+
+`SignalAMonitor`, `SignalAShortMonitor`, and `DayHighMonitor` share the same layout pattern through `components/signal/SignalMonitorLayout.tsx`.
+
+That shared layout always shows:
+- counters
+- preparing cards
+- active position cards
+- exited trade cards
+- a monitor table when the page needs per-symbol rows
+
+This keeps the signal-family pages visually aligned while letting each route supply its own data slice.
+
+## 6. Transport behavior in the browser
+
+`useDashboardData.ts` centralizes all mode switching.
+
+Live mode behavior:
+- open a Socket.IO connection
+- listen for `dashboard:snapshot`
+- fall back to REST polling every two seconds
+- mark the UI stale if no fresh data is received for a while
+
+Replay mode behavior:
+- disconnect the socket
+- fetch replay status
+- jump to the earliest available minute
+- drive slider jumps with `POST /api/replay/jump`
+- emulate playback locally by stepping one minute every second while the play toggle is on
+
+## 7. Intentional parity gaps
+
+The overview intentionally shows unavailable cards for modules the engine does not implement yet. Today those placeholders cover burst groups, intraday burst stocks, and Signal C summary, and they are backed by module metadata instead of being ad hoc hidden UI.
+
+## 8. Essential gotchas
+
+- The dashboard UI is served only from built static assets in `dashboard/dist/`.
+- Replay pages depend on stored snapshot data, not just raw replay inputs.
+- The frontend tolerates both live snapshot keys and stored replay `dashboard_*` keys because replay data is persisted in a different field shape.
+- Signal B is an overview section, not a first-class route.
+
+## 9. Source-of-truth rule
+
+When the dashboard docs drift, prefer these code locations over historical notes:
+- route and shell behavior: `dashboard/src/App.tsx`
+- transport and replay behavior: `dashboard/src/hooks/useDashboardData.ts`
+- API contract: `src/tw_signal_engine/server/app.py`
+- schema: `src/tw_signal_engine/server/dashboard_snapshot.py` and `dashboard/src/types/dashboard.ts`

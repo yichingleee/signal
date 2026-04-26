@@ -41,19 +41,45 @@ An optional `PacedReplayProvider` wrapper adds wall-clock delays to simulate liv
 
 Parquet and text are separate truth sources. Cross-source comparisons are diagnostic, not strict release gates, and `report_trades.csv` includes `DataSource` provenance.
 
-`SessionHooks` (optional callbacks) allow external consumers — the web server, Parquet snapshot writers — to observe engine events without modifying the core loop.
+`SessionHooks` (optional callbacks) allow external consumers, including the web server and Parquet snapshot writers, to observe engine events without modifying the core loop.
 
 ## Dashboard
 
-A FastAPI web server (`src/tw_signal_engine/server/`) serves engine state via REST API and Socket.IO WebSocket. A React SPA (`dashboard/`) provides the monitoring UI.
+A FastAPI web server under `src/tw_signal_engine/server/` serves dashboard data and, when available, mounts the built React SPA from `dashboard/dist/` at `/`.
 
-The API uses a **dual-mode pattern**: every endpoint transparently returns data from either `LiveState` (thread-safe, updated by engine hooks) or `ReplayManager` (Parquet-backed, supports time-travel). The frontend is mode-agnostic.
+The dashboard contract is split across three layers:
+- `app.py`: REST endpoints, replay control endpoints, Socket.IO push loop, and static SPA mounting
+- `live_state.py`: thread-safe bridge between the engine thread and API consumers in live mode
+- `dashboard_snapshot.py`: canonical snapshot schema mirrored by `dashboard/src/types/dashboard.ts`
+
+The implemented UI is a small React + TypeScript SPA under `dashboard/` with these routes:
+- `/`: market overview
+- `/signal-a`: Signal A lifecycle monitor
+- `/signal-a-short`: SignalAShort lifecycle monitor
+- `/day-high`: SignalDayHigh monitor
+
+Signal B is exposed on the overview page rather than a dedicated route.
+
+### Dashboard runtime modes
+
+The backend exposes the same dashboard endpoints in two modes:
+- `live`: read current state from `LiveState` and push `dashboard:snapshot` events over Socket.IO, with REST polling as browser fallback
+- `replay`: read stored snapshots from `ReplayManager` and jump through time via `POST /api/replay/jump`
+
+This keeps the page components mostly transport-agnostic while allowing replay-specific controls such as the time slider.
+
+### Dashboard operational constraints
+
+- The UI at `/` exists only when `dashboard/dist/` has been built.
+- Replay dashboard workflows require snapshot artifacts generated with `--snapshots`.
+- Replay payloads may use stored `dashboard_*` field names, and the frontend normalizes them into the live snapshot shape before rendering.
 
 ## Detailed Docs
 
 - Detailed runtime architecture: [docs/design-docs/runtime-architecture.md](docs/design-docs/runtime-architecture.md)
 - Live data architecture: [docs/design-docs/live-data-architecture.md](docs/design-docs/live-data-architecture.md)
 - Dashboard architecture: [docs/design-docs/dashboard-architecture.md](docs/design-docs/dashboard-architecture.md)
+- Dashboard operations: [docs/references/dashboard-operations.md](docs/references/dashboard-operations.md)
 - Namespace review and move plan: [docs/design-docs/python-module-namespaces.md](docs/design-docs/python-module-namespaces.md)
 - Current committed strategy behavior: [docs/product-specs/current-strategy-spec.md](docs/product-specs/current-strategy-spec.md)
 - Input/output conventions and CLI usage: [docs/references/runtime-conventions.md](docs/references/runtime-conventions.md)

@@ -36,11 +36,11 @@ export TW_SIGNAL_GROUP_FILE=/absolute/path/to/group.csv
 For project-local defaults with direnv:
 
 ```bash
-cat > .envrc <<'EOF'
+cat > .envrc <<'__ENVRC__'
 export TW_SIGNAL_DATA_DIR=/absolute/path/to/tick-data
 export TW_SIGNAL_FILES_DIR=/absolute/path/to/symbols
 export TW_SIGNAL_GROUP_FILE=/absolute/path/to/group.csv
-EOF
+__ENVRC__
 direnv allow
 ```
 
@@ -66,10 +66,7 @@ uv run python -m tw_signal_engine.cli.build_parquet_history_cache \
   --jobs 4
 ```
 
-By default, cache files are written under a sibling `parquet-history-cache/`
-directory next to `--data-dir`. Override with
-`TW_SIGNAL_PARQUET_HISTORY_CACHE_DIR` or `--cache-dir`. Daily and batch replay
-use these caches automatically unless `--no-cache` is set.
+By default, cache files are written under a sibling `parquet-history-cache/` directory next to `--data-dir`. Override with `TW_SIGNAL_PARQUET_HISTORY_CACHE_DIR` or `--cache-dir`. Daily and batch replay use these caches automatically unless `--no-cache` is set.
 
 Parquet and text are separate data sources with separate truth contracts. Use `scripts/compare_text_vs_parquet.py` for diagnostics; strict text-vs-parquet `report_trades.csv` equality is not a release gate.
 
@@ -86,11 +83,46 @@ uv run python -m tw_signal_engine.cli.run_charts_only \
   --with-trade-day \
   --data-dir /path/to/tick-data
 ```
+
 For live/server workflows, install live runtime dependencies:
 
 ```bash
 uv sync --extra live
 ```
+
+## Dashboard Workflows
+
+The repository includes a FastAPI backend under `src/tw_signal_engine/server/` and a React SPA under `dashboard/`.
+
+Build the frontend before expecting the server to render the UI at `/`:
+
+```bash
+cd dashboard
+npm install
+npm run build
+```
+
+Run the server in live mode after installing the live extra:
+
+```bash
+uv run python -m tw_signal_engine.cli.run_server --mode live
+```
+
+Replay dashboard mode requires stored replay snapshots, not only market-data inputs:
+
+```bash
+# Generate snapshots for a replay date
+uv run python -m tw_signal_engine.cli.run_daily_replay \
+  --date 20260129 \
+  --snapshots
+
+# Serve the dashboard against those snapshots
+uv run python -m tw_signal_engine.cli.run_server \
+  --date 20260129 \
+  --mode replay
+```
+
+The implemented dashboard routes are `/`, `/signal-a`, `/signal-a-short`, and `/day-high`. Signal B is shown on the overview page instead of a dedicated route.
 
 ## Signal Direction Modes
 
@@ -104,6 +136,8 @@ uv sync --extra live
 - Architecture overview: [ARCHITECTURE.md](ARCHITECTURE.md)
 - Knowledge base home: [docs/index.md](docs/index.md)
 - Current runtime architecture: [docs/design-docs/runtime-architecture.md](docs/design-docs/runtime-architecture.md)
+- Dashboard architecture: [docs/design-docs/dashboard-architecture.md](docs/design-docs/dashboard-architecture.md)
+- Dashboard operations and gotchas: [docs/references/dashboard-operations.md](docs/references/dashboard-operations.md)
 - Current committed strategy behavior: [docs/product-specs/current-strategy-spec.md](docs/product-specs/current-strategy-spec.md)
 - Runtime conventions and file layout: [docs/references/runtime-conventions.md](docs/references/runtime-conventions.md)
 - Archived parity notes: [docs/references/parity-status.md](docs/references/parity-status.md)
