@@ -101,6 +101,7 @@ uv run python -m tw_signal_engine.cli.run_daily_replay \
 
 - one file per replay date
 - used for previous close, limit-up/down prices, market, and security metadata
+- gotcha: if a parquet replay date is missing `Symbols_YYYYMMDD.csv`, create `Symbols_<target>.csv` from the nearest available symbol CSV before running replay
 - loader accepts:
   - `utf-8-sig`
   - `cp950`

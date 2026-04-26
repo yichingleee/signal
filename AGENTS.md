@@ -21,6 +21,7 @@ parity and historical reference only.
 
 For CLI path defaults and environment-variable behavior, use
 [docs/references/runtime-conventions.md](docs/references/runtime-conventions.md).
+Gotcha: if `Symbols_YYYYMMDD.csv` is missing for a parquet replay date, create a fallback `Symbols_<target>.csv` from the nearest available symbol CSV before running the replay.
 
 ## Validation
 
