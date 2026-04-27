@@ -60,21 +60,21 @@ export function MarketOverview({ snapshot }: Props) {
       const id = `vwap-${row.symbol}-${row.signal_a_state}`
       if (seenToastIds.current.has(id)) continue
       seenToastIds.current.add(id)
-      next.push({ id, title: 'VWAP watchlist', detail: `${row.symbol} ${row.name} ${row.signal_a_state}` })
+      next.push({ id, title: 'VWAP watchlist', detail: `${row.symbol} ${row.name} ${row.signal_a_state}`, kind: 'vwap' })
     }
     for (const row of snapshot.signal_b.rows) {
       if (row.status !== 'trade_zone' && row.status !== 'triggered') continue
       const id = `signal-b-${row.symbol}-${row.status}`
       if (seenToastIds.current.has(id)) continue
       seenToastIds.current.add(id)
-      next.push({ id, title: 'Signal B', detail: `${row.symbol} ${row.name} ${row.status}` })
+      next.push({ id, title: 'Signal B', detail: `${row.symbol} ${row.name} ${row.status}`, kind: 'signal-b' })
     }
     for (const row of snapshot.signal_day_high.rows) {
       if (row.status !== 'pullback' && row.status !== 'triggered') continue
       const id = `day-high-${row.symbol}-${row.status}`
       if (seenToastIds.current.has(id)) continue
       seenToastIds.current.add(id)
-      next.push({ id, title: 'SignalDayHigh', detail: `${row.symbol} ${row.name} ${row.status}` })
+      next.push({ id, title: 'SignalDayHigh', detail: `${row.symbol} ${row.name} ${row.status}`, kind: 'day-high' })
     }
     if (next.length > 0) {
       setToasts((prev) => [...next, ...prev].slice(0, 4))
@@ -87,6 +87,19 @@ export function MarketOverview({ snapshot }: Props) {
       {!snapshot && <div className="empty-state">Waiting for data...</div>}
       {snapshot && (
         <>
+          <section className="dashboard-section alerts-section">
+            <div className="dashboard-section-header">
+              <div>
+                <h2>Alerts</h2>
+                <span className="section-count">{toasts.length}</span>
+              </div>
+            </div>
+            {toasts.length > 0 ? (
+              <ToastStack messages={toasts} className="toast-stack-inline" />
+            ) : (
+              <div className="alerts-empty">No alerts yet</div>
+            )}
+          </section>
           <SectionToggle id="groups" title="Strong Groups" count={snapshot.groups.length} enabled={sections.groups} onToggle={toggleSection}>
             <GroupGrid groups={snapshot.groups} />
           </SectionToggle>
@@ -121,7 +134,6 @@ export function MarketOverview({ snapshot }: Props) {
           <SectionToggle id="signalC" title="Signal C Summary" enabled={sections.signalC} onToggle={toggleSection}>
             <UnavailableCard label="Signal C Summary" module={moduleByKey.get('signal-c-summary')} />
           </SectionToggle>
-          <ToastStack messages={toasts} />
         </>
       )}
     </main>

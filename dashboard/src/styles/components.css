@@ -605,33 +605,84 @@
   padding: 24px;
 }
 
-.toast-stack {
-  position: fixed;
-  right: 24px;
-  bottom: 86px;
-  z-index: 120;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: min(340px, calc(100vw - 48px));
+.alerts-section .dashboard-section-header {
+  padding: 10px 14px;
+  margin-bottom: 8px;
+}
+
+.alerts-section .dashboard-section-header h2 {
+  font-size: 14px;
+}
+
+.alerts-section .section-count {
+  font-size: 11px;
+}
+
+.toast-stack-inline {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 24px 16px;
 }
 
 .toast-card {
   border: 1px solid var(--border-active);
-  border-radius: var(--radius);
-  padding: 12px 14px;
+  border-radius: 12px;
+  padding: 8px 10px;
   background-color: var(--bg-card);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
 }
 
-.toast-card strong,
+.toast-card strong {
+  display: block;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
 .toast-card span {
   display: block;
+  color: var(--text-secondary);
+  font-size: 11px;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.toast-card span {
+.toast-card-vwap {
+  border-color: rgba(74, 168, 255, 0.7);
+  background: linear-gradient(180deg, rgba(34, 88, 132, 0.28) 0%, var(--bg-card) 100%);
+}
+
+.toast-card-day-high {
+  border-color: rgba(99, 201, 132, 0.75);
+  background: linear-gradient(180deg, rgba(53, 109, 74, 0.32) 0%, var(--bg-card) 100%);
+}
+
+.toast-card-signal-b {
+  border-color: rgba(240, 184, 91, 0.75);
+  background: linear-gradient(180deg, rgba(115, 84, 33, 0.3) 0%, var(--bg-card) 100%);
+}
+
+@media (max-width: 1200px) {
+  .toast-stack-inline {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .toast-stack-inline {
+    grid-template-columns: 1fr;
+  }
+}
+
+.alerts-empty {
+  margin: 0 24px 24px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .modal-backdrop {
