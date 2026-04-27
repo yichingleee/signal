@@ -61,6 +61,8 @@ from tw_signal_engine.server.dashboard_snapshot import (
     SignalCounters,
     SignalDayHighMonitorEntry,
     SignalDayHighMonitorSnapshot,
+    SignalDayHighPhase,
+    SignalDayHighPhaseCounts,
     VWAPMonitorEntry,
 )
 from tw_signal_engine.signals.evaluate_signal_a import evaluate_signal_a
@@ -592,63 +594,59 @@ def _build_dashboard_snapshot(
         symbol for symbol, entry in pos.open_trades.items() if entry.signal_type == "SignalDayHigh"
     }
     day_high_preparing: list[PreparingEntry] = []
+
+    def _fmt_price(raw: int) -> float:
+        return raw / 10000 if raw > 0 else 0.0
+
+    def _fmt_time(raw: int) -> str:
+        return str(raw) if raw > 0 else ""
+
     for symbol, day_high_state in signal_day_high_map.items():
-        if not (
-            day_high_state.pullback_confirmed
-            or day_high_state.triggered
-            or day_high_state.entries > 0
-        ):
+        if symbol in day_high_open_symbols:
+            continue
+        if not (day_high_state.established_high > 0 or day_high_state.triggered or day_high_state.entries > 0):
             continue
         ref = f1_map.get(symbol)
         name = getattr(ref, "name", symbol)
         group_name = symbol_to_group.get(symbol, "")
-        status = (
-            "triggered"
-            if day_high_state.triggered
-            else "pullback"
-            if day_high_state.pullback_confirmed
-            else "tracking"
-        )
+        if day_high_state.triggered:
+            phase: SignalDayHighPhase = "triggered"
+        elif day_high_state.pullback_confirmed:
+            phase = "pullback"
+        elif day_high_state.established_high > 0:
+            phase = "tracking"
+        else:
+            phase = "exited"
         day_high_rows.append(
             SignalDayHighMonitorEntry(
                 symbol=symbol,
                 name=name,
                 group_name=group_name,
                 triggered=day_high_state.triggered,
-                established_high=(
-                    day_high_state.established_high / 10000
-                    if day_high_state.established_high > 0
-                    else 0.0
-                ),
-                established_high_time=(
-                    str(day_high_state.established_high_time)
-                    if day_high_state.established_high_time > 0
-                    else ""
-                ),
+                established_high=_fmt_price(day_high_state.established_high),
+                established_high_time=_fmt_time(day_high_state.established_high_time),
                 pullback_confirmed=day_high_state.pullback_confirmed,
-                pullback_low=(
-                    day_high_state.pullback_low / 10000
-                    if day_high_state.pullback_low > 0
-                    else 0.0
-                ),
-                pullback_time=(
-                    str(day_high_state.pullback_time)
-                    if day_high_state.pullback_time > 0
-                    else ""
-                ),
+                pullback_low=_fmt_price(day_high_state.pullback_low),
+                pullback_time=_fmt_time(day_high_state.pullback_time),
+                last_trigger_high=_fmt_price(day_high_state.last_trigger_high),
+                last_trigger_high_time=_fmt_time(day_high_state.last_trigger_high_time),
+                last_trigger_pullback_low=_fmt_price(day_high_state.last_trigger_pullback_low),
+                last_trigger_pullback_time=_fmt_time(day_high_state.last_trigger_pullback_time),
+                trigger_time=_fmt_time(day_high_state.last_trigger_time),
+                phase=phase,
                 entries=day_high_state.entries,
-                status=status,
+                status=phase,
             )
         )
         day_high_symbols.add(symbol)
 
-        if (day_high_state.pullback_confirmed or day_high_state.triggered) and symbol not in day_high_open_symbols:
+        if phase in {"pullback", "triggered"}:
             idx_for_symbol = latest_idx_map.get(symbol)
             if idx_for_symbol is not None:
                 price_raw = last_price.get(symbol, 0)
                 current_price = price_raw / 10000
                 established_high = (
-                    day_high_state.established_high / 10000
+                    _fmt_price(day_high_state.established_high)
                     if day_high_state.established_high > 0
                     else current_price
                 )
@@ -735,10 +733,36 @@ def _build_dashboard_snapshot(
         stop_loss=sum(1 for trade in day_high_exited if trade.exit_cause == "stopLoss"),
         forbidden=0,
     )
+
     for symbol, entry in pos.open_trades.items():
-        if entry.signal_type != "SignalDayHigh" or symbol in day_high_symbols:
+        if entry.signal_type != "SignalDayHigh":
             continue
         day_high_open_state: SignalDayHighState | None = signal_day_high_map.get(symbol)
+        if not day_high_open_state:
+            if symbol in day_high_symbols:
+                continue
+            established_high = entry.day_high_at_entry
+            pullback_low = 0.0
+            pullback_time = ""
+            trigger_time = _fmt_time(entry.entry_time_raw)
+            last_trigger_high = entry.day_high_at_entry
+            last_trigger_high_time = _fmt_time(entry.entry_time_raw)
+            last_pullback_low = 0.0
+            last_pullback_time = ""
+        else:
+            established_high = _fmt_price(
+                day_high_open_state.last_trigger_high
+                if day_high_open_state.last_trigger_high > 0
+                else int(entry.day_high_at_entry * 10000)
+            )
+            pullback_low = _fmt_price(day_high_open_state.last_trigger_pullback_low)
+            pullback_time = _fmt_time(day_high_open_state.last_trigger_pullback_time)
+            trigger_time = _fmt_time(day_high_open_state.last_trigger_time)
+            last_trigger_high = _fmt_price(day_high_open_state.last_trigger_high)
+            last_trigger_high_time = _fmt_time(day_high_open_state.last_trigger_high_time)
+            last_pullback_low = _fmt_price(day_high_open_state.last_trigger_pullback_low)
+            last_pullback_time = _fmt_time(day_high_open_state.last_trigger_pullback_time)
+
         ref = f1_map.get(symbol)
         name = getattr(ref, "name", symbol)
         day_high_rows.append(
@@ -747,29 +771,40 @@ def _build_dashboard_snapshot(
                 name=name,
                 group_name=entry.group_name,
                 triggered=True,
-                established_high=(
-                    day_high_open_state.established_high / 10000
-                    if day_high_open_state and day_high_open_state.established_high > 0
-                    else entry.day_high_at_entry
-                ),
-                pullback_low=(
-                    day_high_open_state.pullback_low / 10000
-                    if day_high_open_state and day_high_open_state.pullback_low > 0
-                    else 0.0
-                ),
+                established_high=established_high,
+                established_high_time=last_trigger_high_time,
+                pullback_confirmed=True,
+                pullback_low=pullback_low,
+                pullback_time=pullback_time,
+                last_trigger_high=last_trigger_high,
+                last_trigger_high_time=last_trigger_high_time,
+                last_trigger_pullback_low=last_pullback_low,
+                last_trigger_pullback_time=last_pullback_time,
+                trigger_time=trigger_time,
+                phase="holding",
                 entries=(day_high_open_state.entries if day_high_open_state else 1),
                 status="holding",
             )
         )
+        day_high_symbols.add(symbol)
+
+    phase_counts = {
+        "tracking": sum(1 for row in day_high_rows if row.phase == "tracking"),
+        "pullback": sum(1 for row in day_high_rows if row.phase == "pullback"),
+        "triggered": sum(1 for row in day_high_rows if row.phase == "triggered"),
+        "holding": sum(1 for row in day_high_rows if row.phase == "holding"),
+        "exited": sum(1 for row in day_high_rows if row.phase == "exited"),
+    }
     day_high_snapshot = SignalDayHighMonitorSnapshot(
         rows=day_high_rows,
         preparing=day_high_preparing,
         entered=day_high_entered,
         exited=day_high_exited,
+        phase_counts=SignalDayHighPhaseCounts(**phase_counts),
         counters=day_high_counters,
-        tracking=sum(1 for state in signal_day_high_map.values() if state.established_high > 0),
-        pullback=sum(1 for row in day_high_rows if row.status == "pullback"),
-        triggered=sum(1 for row in day_high_rows if row.status in {"triggered", "holding"}),
+        tracking=phase_counts["tracking"],
+        pullback=phase_counts["pullback"],
+        triggered=phase_counts["triggered"] + phase_counts["holding"],
         entries=sum(row.entries for row in day_high_rows),
     )
 

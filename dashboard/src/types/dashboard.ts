@@ -135,6 +135,8 @@ export interface SignalBMonitorSnapshot {
   forbidden: number
 }
 
+export type SignalDayHighPhase = 'tracking' | 'pullback' | 'triggered' | 'holding' | 'exited'
+
 export interface SignalDayHighMonitorEntry {
   symbol: string
   name: string
@@ -145,8 +147,22 @@ export interface SignalDayHighMonitorEntry {
   pullback_confirmed: boolean
   pullback_low: number
   pullback_time: string
+  last_trigger_high: number
+  last_trigger_high_time: string
+  last_trigger_pullback_low: number
+  last_trigger_pullback_time: string
+  trigger_time: string
+  phase: SignalDayHighPhase
   entries: number
   status: string
+}
+
+export interface SignalDayHighPhaseCounts {
+  tracking: number
+  pullback: number
+  triggered: number
+  holding: number
+  exited: number
 }
 
 export interface SignalDayHighMonitorSnapshot {
@@ -155,6 +171,7 @@ export interface SignalDayHighMonitorSnapshot {
   entered: ActivePosition[]
   exited: CompletedTrade[]
   counters: SignalCounters
+  phase_counts: SignalDayHighPhaseCounts
   tracking: number
   pullback: number
   triggered: number

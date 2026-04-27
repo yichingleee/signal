@@ -9,6 +9,8 @@ import type {
   SignalBMonitorSnapshot,
   SignalCounters,
   SignalDayHighMonitorSnapshot,
+  SignalDayHighMonitorEntry,
+  SignalDayHighPhase,
 } from '../types/dashboard'
 
 function hhmmToMinutes(hhmm: string): number {
@@ -43,19 +45,108 @@ const EMPTY_SIGNAL_COUNTERS: SignalCounters = {
   forbidden: 0,
 }
 
+function toSignalDayHighPhase(raw: unknown): SignalDayHighPhase {
+  const value = typeof raw === 'string' ? raw : ''
+  if (value === 'tracking' || value === 'pullback' || value === 'triggered' || value === 'holding' || value === 'exited') {
+    return value
+  }
+  return 'tracking'
+}
+
+function toString(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function toNumber(value: unknown): number {
+  return typeof value === 'number' ? value : 0
+}
+
+function toBoolean(value: unknown): boolean {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') {
+    return value.toLowerCase() === 'true' || value === '1'
+  }
+  return false
+}
+
+function normalizeSignalDayHighRows(rawRows: unknown): SignalDayHighMonitorEntry[] {
+  if (!Array.isArray(rawRows)) return []
+
+  return rawRows
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
+      const row = entry as Record<string, unknown>
+      const phase = toSignalDayHighPhase(row.phase ?? row.status)
+      const triggered =
+        typeof row.triggered === 'boolean'
+          ? row.triggered
+          : row.triggered === 1
+            ? true
+            : row.triggered === '1'
+              ? true
+              : false
+
+      return {
+        symbol: typeof row.symbol === 'string' ? row.symbol : '',
+        name: typeof row.name === 'string' ? row.name : '',
+        group_name: typeof row.group_name === 'string' ? row.group_name : '',
+        triggered,
+        established_high: toNumber(row.established_high),
+        established_high_time: toString(row.established_high_time),
+        pullback_confirmed: toBoolean(row.pullback_confirmed),
+        pullback_low: toNumber(row.pullback_low),
+        pullback_time: toString(row.pullback_time),
+        last_trigger_high: toNumber(row.last_trigger_high),
+        last_trigger_high_time: toString(row.last_trigger_high_time),
+        last_trigger_pullback_low: toNumber(row.last_trigger_pullback_low),
+        last_trigger_pullback_time: toString(row.last_trigger_pullback_time),
+        trigger_time: toString(row.trigger_time),
+        phase,
+        entries: toNumber(row.entries),
+        status: toString(row.status) || phase,
+      }
+    })
+    .filter((row): row is SignalDayHighMonitorEntry => row !== null)
+}
+
+function normalizeSignalDayHighPhaseCounts(source: Record<string, unknown> | null): {
+  tracking: number
+  pullback: number
+  triggered: number
+  holding: number
+  exited: number
+} {
+  if (!source || typeof source !== 'object') {
+    return { tracking: 0, pullback: 0, triggered: 0, holding: 0, exited: 0 }
+  }
+  return {
+    tracking: toNumber(source.tracking),
+    pullback: toNumber(source.pullback),
+    triggered: toNumber(source.triggered),
+    holding: toNumber(source.holding),
+    exited: toNumber(source.exited),
+  }
+}
+
 function normalizeSignalDayHighSnapshot(raw: unknown): SignalDayHighMonitorSnapshot {
   const source =
     raw && typeof raw === 'object' && !Array.isArray(raw)
       ? (raw as Record<string, unknown>)
       : null
-  const rows = Array.isArray(source?.rows) ? source.rows : []
+  const rows = normalizeSignalDayHighRows(source?.rows)
   const preparing = Array.isArray(source?.preparing) ? source.preparing : []
   const entered = Array.isArray(source?.entered) ? source.entered : []
   const exited = Array.isArray(source?.exited) ? source.exited : []
   const counters =
     source?.counters && typeof source.counters === 'object' && !Array.isArray(source.counters)
-      ? (source.counters as SignalCounters)
-      : EMPTY_SIGNAL_COUNTERS
+    ? (source.counters as SignalCounters)
+    : EMPTY_SIGNAL_COUNTERS
+  const phaseCounts = normalizeSignalDayHighPhaseCounts(
+    source?.phase_counts && typeof source.phase_counts === 'object' && !Array.isArray(source.phase_counts)
+      ? (source.phase_counts as Record<string, unknown>)
+      : null,
+  )
 
   return {
     rows,
@@ -63,6 +154,7 @@ function normalizeSignalDayHighSnapshot(raw: unknown): SignalDayHighMonitorSnaps
     entered,
     exited,
     counters,
+    phase_counts: phaseCounts,
     tracking: typeof source?.tracking === 'number' ? source.tracking : 0,
     pullback: typeof source?.pullback === 'number' ? source.pullback : 0,
     triggered: typeof source?.triggered === 'number' ? source.triggered : 0,
@@ -195,7 +287,7 @@ export function useDashboardData(): DashboardData {
         vwap_monitor: vwapRes.vwap,
         signal_a: signalARes,
         signal_b: signalBRes,
-        signal_day_high: signalDayHighRes,
+        signal_day_high: normalizeSignalDayHighSnapshot(signalDayHighRes),
         modules: modulesRes.modules,
       }))
       setLastUpdate(now)

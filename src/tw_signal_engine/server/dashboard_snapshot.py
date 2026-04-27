@@ -196,6 +196,9 @@ class SignalBMonitorSnapshot:
     forbidden: int = 0
 
 
+SignalDayHighPhase = Literal["tracking", "pullback", "triggered", "holding", "exited"]
+
+
 @dataclass(slots=True)
 class SignalDayHighMonitorEntry:
     """Per-symbol SignalDayHigh pullback/breakout state."""
@@ -209,8 +212,25 @@ class SignalDayHighMonitorEntry:
     pullback_confirmed: bool = False
     pullback_low: float = 0.0
     pullback_time: str = ""
+    last_trigger_high: float = 0.0
+    last_trigger_high_time: str = ""
+    last_trigger_pullback_low: float = 0.0
+    last_trigger_pullback_time: str = ""
+    trigger_time: str = ""
+    phase: SignalDayHighPhase = "tracking"
     entries: int = 0
     status: str = ""
+
+
+@dataclass(slots=True)
+class SignalDayHighPhaseCounts:
+    """Explicit phase counts for DayHigh row population."""
+
+    tracking: int = 0
+    pullback: int = 0
+    triggered: int = 0
+    holding: int = 0
+    exited: int = 0
 
 
 @dataclass(slots=True)
@@ -222,6 +242,7 @@ class SignalDayHighMonitorSnapshot:
     entered: list[ActivePosition] = field(default_factory=list)
     exited: list[CompletedTrade] = field(default_factory=list)
     counters: SignalCounters = field(default_factory=SignalCounters)
+    phase_counts: SignalDayHighPhaseCounts = field(default_factory=SignalDayHighPhaseCounts)
     tracking: int = 0
     pullback: int = 0
     triggered: int = 0

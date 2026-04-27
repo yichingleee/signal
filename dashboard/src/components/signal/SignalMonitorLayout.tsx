@@ -14,6 +14,7 @@ interface Props {
   exited: CompletedTrade[]
   counters: SignalCounters
   monitorEntries?: VWAPMonitorEntry[]
+  beforeLifecycle?: ReactNode
   children?: ReactNode
 }
 
@@ -25,12 +26,14 @@ export function SignalMonitorLayout({
   exited,
   counters,
   monitorEntries,
+  beforeLifecycle,
   children,
 }: Props) {
   return (
     <main className="page-content">
       <div className="section-title">{title}</div>
       <CounterBar counters={counters} lastUpdate={lastUpdate} />
+      {beforeLifecycle}
       <PreparingCards entries={preparing} />
       <ActiveCards positions={entered} />
       <ExitedCards trades={exited} />

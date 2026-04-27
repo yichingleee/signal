@@ -1,4 +1,5 @@
 import { SignalMonitorLayout } from '../components/signal/SignalMonitorLayout'
+import { DayHighPhaseBar } from '../components/signal/DayHighPhaseBar'
 import { SignalDayHighTable } from '../components/overview/SignalTables'
 import type { DashboardSnapshot } from '../types/dashboard'
 
@@ -25,8 +26,12 @@ export function DayHighMonitor({ snapshot, lastUpdate }: Props) {
       entered={snapshot.signal_day_high.entered}
       exited={snapshot.signal_day_high.exited}
       counters={snapshot.signal_day_high.counters}
-    >
-      <SignalDayHighTable rows={snapshot.signal_day_high.rows} />
-    </SignalMonitorLayout>
+      beforeLifecycle={(
+        <>
+          <DayHighPhaseBar snapshot={snapshot.signal_day_high} />
+          <SignalDayHighTable rows={snapshot.signal_day_high.rows} />
+        </>
+      )}
+    />
   )
 }

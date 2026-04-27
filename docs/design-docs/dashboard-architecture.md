@@ -69,6 +69,11 @@ The top-level snapshot contains:
 - `signal_day_high`
 - `modules`
 
+`signal_day_high` is a two-layer model:
+- `rows`: per-symbol state machine rows with explicit phase (`tracking`, `pullback`, `triggered`, `holding`, `exited`) and preserved trigger context (`last_trigger_high`, `last_trigger_pullback_low`, timestamps).
+- `preparing` / `entered` / `exited`: active lifecycle slices for open/closed position cards.
+- `phase_counts`: explicit count object that the overview and DayHigh page use for strategy-state summaries.
+
 Important design detail: the frontend also normalizes replay payloads that still use stored `dashboard_*` field names. That compatibility logic lives in `useDashboardData.ts`, which lets replay snapshots and live snapshots feed the same React components.
 
 ## 5. Frontend structure
@@ -112,7 +117,13 @@ Section open/closed state is persisted in browser `localStorage` under `tw-signa
 
 `SignalAMonitor`, `SignalAShortMonitor`, and `DayHighMonitor` share the same layout pattern through `components/signal/SignalMonitorLayout.tsx`.
 
-That shared layout always shows:
+DayHigh now uses a two-stage pattern on the same page:
+- `DayHighPhaseBar` renders phase counts for strategy-state progression (`tracking` / `pullback` / `triggered` / `holding`).
+- The DayHigh route then renders state rows for the same snapshot rows before the lifecycle cards.
+
+`SignalAMonitor` and `SignalAShortMonitor` remain anchored to generic lifecycle counters and cards.
+
+The shared layout always shows:
 - counters
 - preparing cards
 - active position cards

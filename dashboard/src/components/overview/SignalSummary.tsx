@@ -13,6 +13,16 @@ interface Props {
 export function SignalSummary({ signalA, signalB, signalDayHigh }: Props) {
   const shortPreparing = signalA.preparing.filter((row) => row.side === 'short').length
   const shortHolding = signalA.entered.filter((row) => row.side === 'short').length
+  const dayHighPhase = signalDayHigh.phase_counts
+    ? signalDayHigh.phase_counts
+    : {
+      tracking: signalDayHigh.rows.filter((row) => row.phase === 'tracking').length,
+      pullback: signalDayHigh.rows.filter((row) => row.phase === 'pullback').length,
+      triggered: signalDayHigh.rows.filter((row) => row.phase === 'triggered').length,
+      holding: signalDayHigh.rows.filter((row) => row.phase === 'holding').length,
+      exited: signalDayHigh.rows.filter((row) => row.phase === 'exited').length,
+    }
+  const dayHighTriggered = dayHighPhase.triggered + dayHighPhase.holding
 
   return (
     <div className="summary-grid">
@@ -37,9 +47,10 @@ export function SignalSummary({ signalA, signalB, signalDayHigh }: Props) {
       <div className="summary-card">
         <div className="summary-title">SignalDayHigh</div>
         <div className="summary-metrics">
-          <Metric label="tracking" value={signalDayHigh.tracking} tone="blue" />
-          <Metric label="pullback" value={signalDayHigh.pullback} tone="yellow" />
-          <Metric label="triggered" value={signalDayHigh.triggered} tone="green" />
+          <Metric label="tracking" value={dayHighPhase.tracking} tone="blue" />
+          <Metric label="pullback" value={dayHighPhase.pullback} tone="yellow" />
+          <Metric label="triggered" value={dayHighTriggered} tone="green" />
+          <Metric label="holding" value={dayHighPhase.holding} tone="orange" />
           <Metric label="entries" value={signalDayHigh.entries} tone="green" />
         </div>
       </div>
