@@ -182,12 +182,16 @@ export interface SignalDayHighSelectionRow {
   vol_ratio: number
   is_disposition: boolean
   is_prev_day_limit_up: boolean
+  pass_symbol_valid: boolean
+  pass_group_validity: boolean
   pass_group_rank: boolean
+  pass_entry_min_group_rank: boolean
   pass_member_rank: boolean
   pass_raw_rank: boolean
   pass_vwap_band: boolean
   pass_disposition_block: boolean
   pass_prev_day_limit_up: boolean
+  pass_entry_max_vol_ratio: boolean
 }
 
 export interface SignalDayHighEntryRow {

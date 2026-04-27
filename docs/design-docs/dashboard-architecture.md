@@ -74,9 +74,9 @@ The top-level snapshot contains:
 - `preparing` / `entered` / `exited`: active lifecycle slices for open/closed position cards.
 - `phase_counts`: explicit count object that the overview and DayHigh page use for strategy-state summaries.
 - `logic`: DayHigh explainability payload sourced from engine decisions.
-  - `selection_rows`: strong-group stock-selection qualification and rejection reasons.
+  - `selection_rows`: strong-group stock-selection qualification and rejection reasons. For DayHigh these rows are replay-parity rows: `selected=true` requires the current M1/R1 candidate to pass symbol/group validity, group rank, `entry_min_group_rank`, VWAP band, disposition and previous-limit-up blocks, and `entry_max_vol_ratio`.
   - `entry_rows`: DayHigh-specific group-limit-up gate plus shared entry-filter pass/fail flags and final block reason.
-  - `exit_rows`: open-position stop/time/overnight policy values and closed-trade leave causes.
+  - `exit_rows`: open-position stop/time/overnight policy values and closed-trade leave causes. `overnight_eligible_now` is true only when `hold_overnight_on_limit_up` is enabled, the position is currently locked limit-up, and the snapshot time is at or after `exit_time_limit`.
   - `funnel`: compact `selected/armed/blocked/holding` counters and block-reason counts.
 
 Important design detail: the frontend also normalizes replay payloads that still use stored `dashboard_*` field names. That compatibility logic lives in `useDashboardData.ts`, which lets replay snapshots and live snapshots feed the same React components.
@@ -129,7 +129,7 @@ through `components/signal/SignalMonitorLayout.tsx`.
 
 DayHigh now uses an explainability-first route order:
 - `DayHighPhaseBar` for phase counts.
-- `DayHighSelectionTable` for strong-group stock-selection logic.
+- `DayHighSelectionTable` for replay-aligned strong-group stock-selection logic and the first failed gate.
 - `SignalDayHighTable` for anchored-high / pullback / trigger progression.
 - `DayHighEntryDecisionTable` for group-limit-up and entry-filter outcomes.
 - lifecycle cards plus `DayHighExitPolicyCards` for real stop/time/overnight
@@ -165,6 +165,7 @@ The overview intentionally shows unavailable cards for modules the engine does n
 - Replay pages depend on stored snapshot data, not just raw replay inputs.
 - The frontend tolerates both live snapshot keys and stored replay `dashboard_*` keys because replay data is persisted in a different field shape.
 - Signal B is an overview section, not a first-class route.
+- DayHigh selection and overnight fields are explanations of the replay engine's current decision gates, not independent UI-derived heuristics.
 
 ## 9. Source-of-truth rule
 

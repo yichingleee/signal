@@ -52,6 +52,7 @@ def describe_day_high_exit_policy(
     config: ExecutionConfig,
     entry_vwap: float,
     currently_limit_up_locked: bool = False,
+    current_match_time_str: int = 0,
 ) -> DayHighExitPolicyDescription:
     """Return DayHigh exit policy details from the shared execution settings."""
     policy = policy_for_signal("SignalDayHigh", config)
@@ -60,6 +61,7 @@ def describe_day_high_exit_policy(
     overnight_eligible_now = (
         policy.hold_overnight_on_limit_up
         and currently_limit_up_locked
+        and current_match_time_str >= config.exit_time_limit
     )
     return DayHighExitPolicyDescription(
         stop_basis="entry_vwap",

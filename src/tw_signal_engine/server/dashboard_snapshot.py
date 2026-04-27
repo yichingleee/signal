@@ -253,12 +253,16 @@ class SignalDayHighSelectionRow:
     vol_ratio: float = 0.0
     is_disposition: bool = False
     is_prev_day_limit_up: bool = False
+    pass_symbol_valid: bool = False
+    pass_group_validity: bool = False
     pass_group_rank: bool = False
+    pass_entry_min_group_rank: bool = True
     pass_member_rank: bool = False
     pass_raw_rank: bool = False
     pass_vwap_band: bool = False
     pass_disposition_block: bool = False
     pass_prev_day_limit_up: bool = False
+    pass_entry_max_vol_ratio: bool = True
 
 
 @dataclass(slots=True)

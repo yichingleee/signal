@@ -94,6 +94,14 @@ class StrongGroupEvaluator:
             return self.config.entry_max_vwap_pct_chg
         return 0.085
 
+    @staticmethod
+    def _rank_is_top_n(rank: int, top_n: int) -> bool:
+        if rank <= 0:
+            return False
+        if top_n <= 0:
+            return rank == 1
+        return rank <= top_n
+
     def initialize_validity(self) -> None:
         """Pre-compute which symbols are valid based on month avg trading val.
 
@@ -451,11 +459,26 @@ class StrongGroupEvaluator:
         vwap_raw = int(idx.vwap) if idx is not None else 0
         vwap_pct = self._percentage_chg(symbol, vwap_raw) if vwap_raw > 0 else 0.0
 
-        pass_group_rank = group_rank > 0 and group_rank <= self.config.group_valid_top_n
+        pass_symbol_valid = self.symbol_is_valid.get(symbol, False)
+        pass_group_validity = False
+        if group_name and pass_symbol_valid:
+            pass_group_validity = self._eval_group_validity(
+                symbol,
+                group_name,
+                self._current_group_avg_pct(group_name),
+            )
+        pass_group_rank = self._rank_is_top_n(group_rank, self.config.group_valid_top_n)
+        pass_entry_min_group_rank = self.config.entry_min_group_rank <= 0 or (
+            group_rank >= self.config.entry_min_group_rank
+        )
         pass_member_rank = member_rank == 1
-        pass_raw_rank = (not self.config.require_raw_m1) or raw_member_rank == 1
+        pass_raw_rank = raw_member_rank == 1
         pass_disposition_block = not (self.config.block_disposition_entry and is_disposition)
         pass_prev_day_limit_up = not (self.config.filter_prev_day_limit_up and is_prev_day_limit_up)
+        pass_entry_max_vol_ratio = (
+            self.config.entry_max_vol_ratio <= 0
+            or vol_ratio < self.config.entry_max_vol_ratio
+        )
 
         pass_vwap_band = False
         if self._is_short:
@@ -469,19 +492,29 @@ class StrongGroupEvaluator:
 
         selected = (
             bool(group_name)
+            and pass_symbol_valid
+            and pass_group_validity
             and pass_group_rank
+            and pass_entry_min_group_rank
             and pass_member_rank
             and pass_raw_rank
             and pass_vwap_band
             and pass_disposition_block
             and pass_prev_day_limit_up
+            and pass_entry_max_vol_ratio
         )
 
         rejection_reason = ""
         if not group_name:
             rejection_reason = "no_group"
+        elif not pass_symbol_valid:
+            rejection_reason = "symbol_validity"
+        elif not pass_group_validity:
+            rejection_reason = "group_validity"
         elif not pass_group_rank:
             rejection_reason = "group_rank"
+        elif not pass_entry_min_group_rank:
+            rejection_reason = "entry_min_group_rank"
         elif not pass_member_rank:
             rejection_reason = "member_rank"
         elif not pass_raw_rank:
@@ -492,6 +525,8 @@ class StrongGroupEvaluator:
             rejection_reason = "disposition_block"
         elif not pass_prev_day_limit_up:
             rejection_reason = "prev_day_limit_up"
+        elif not pass_entry_max_vol_ratio:
+            rejection_reason = "entry_max_vol_ratio"
 
         return SignalDayHighSelectionRow(
             symbol=symbol,
@@ -510,12 +545,16 @@ class StrongGroupEvaluator:
             vol_ratio=vol_ratio,
             is_disposition=is_disposition,
             is_prev_day_limit_up=is_prev_day_limit_up,
+            pass_symbol_valid=pass_symbol_valid,
+            pass_group_validity=pass_group_validity,
             pass_group_rank=pass_group_rank,
+            pass_entry_min_group_rank=pass_entry_min_group_rank,
             pass_member_rank=pass_member_rank,
             pass_raw_rank=pass_raw_rank,
             pass_vwap_band=pass_vwap_band,
             pass_disposition_block=pass_disposition_block,
             pass_prev_day_limit_up=pass_prev_day_limit_up,
+            pass_entry_max_vol_ratio=pass_entry_max_vol_ratio,
         )
 
     def to_snapshot(self, idx_map: dict[str, IndexData]) -> list[GroupSnapshot]:

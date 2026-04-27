@@ -58,3 +58,5 @@ Do not treat those cards as UI bugs unless the underlying module-availability co
 - Section visibility on the overview page is persisted in browser `localStorage` under `tw-signal-dashboard-sections`.
 - Replay snapshots may arrive with `dashboard_*` field names, and the frontend normalizes them before rendering.
 - Signal B has no dedicated route and is only visible from the overview page.
+- The `/day-high` stock-selection table should match replay eligibility. A row marked selected has passed the current strong-group gates used by replay, including M1/R1 rank, group-rank floor, VWAP band, disposition and previous-limit-up blocks, and max volume-ratio rejection.
+- DayHigh `overnight_eligible_now` is not a generic locked-limit-up flag. It should become true only after `exit_time_limit` when `hold_overnight_on_limit_up=true` and the open position is still locked limit-up.

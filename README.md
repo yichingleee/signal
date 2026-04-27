@@ -124,6 +124,8 @@ uv run python -m tw_signal_engine.cli.run_server \
 
 The implemented dashboard routes are `/`, `/signal-a`, `/signal-a-short`, and `/day-high`. Signal B is shown on the overview page instead of a dedicated route.
 
+The DayHigh route is an explainability view for replay/live decisions. Its stock-selection table mirrors the replay strong-group gates, including M1/R1 rank, group-rank floor, VWAP band, disposition/previous-limit-up blocks, and max volume-ratio rejection. Its overnight status is eligible only when a DayHigh position is locked limit-up at or after `exit_time_limit`.
+
 ## Signal Direction Modes
 
 - Default strategy mode is `Strategy.trade_mode=long`.

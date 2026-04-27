@@ -83,6 +83,7 @@ class _StrongGroupSnapshotStub:
 def _build_base_snapshot(
     *,
     config: NormalizedStrategyConfig | None = None,
+    match_time_str: int = 93100000000,
     signal_day_high_map: dict[str, SignalDayHighState] | None = None,
     day_high_entry_logic: dict[str, SignalDayHighEntryRow] | None = None,
     pos: PositionState | None = None,
@@ -93,7 +94,7 @@ def _build_base_snapshot(
     cfg = config or NormalizedStrategyConfig()
     snapshot = _build_dashboard_snapshot(
         config=cfg,
-        match_time_str=93100000000,
+        match_time_str=match_time_str,
         tick_count=1,
         strong_group=strong_group or _StrongGroupSnapshotStub(),
         strong_single=_StrongSingleStub(),
@@ -162,7 +163,20 @@ def test_open_position_exposes_real_day_high_exit_policy_values() -> None:
     assert exit_row.time_exit_deadline == "13:20:00"
     assert exit_row.hold_overnight_on_limit_up is True
     assert exit_row.currently_limit_up_locked is True
-    assert exit_row.overnight_eligible_now is True
+    assert exit_row.overnight_eligible_now is False
+
+    after_deadline = _build_base_snapshot(
+        config=cfg,
+        match_time_str=132000000000,
+        pos=pos,
+        day_high_limit_up_locked={"2330": True},
+    )
+    after_deadline_rows = [
+        row for row in after_deadline.logic.exit_rows if row.symbol == "2330" and row.status == "open"
+    ]
+    assert len(after_deadline_rows) == 1
+    assert after_deadline_rows[0].currently_limit_up_locked is True
+    assert after_deadline_rows[0].overnight_eligible_now is True
 
 
 def test_closed_trade_exposes_overnight_exit_cause_in_logic_exit_rows() -> None:

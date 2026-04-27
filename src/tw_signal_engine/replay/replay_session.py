@@ -759,6 +759,7 @@ def _build_dashboard_snapshot(
             config.execution,
             entry_vwap=entry.entry_vwap,
             currently_limit_up_locked=day_high_limit_up_locked.get(symbol, False),
+            current_match_time_str=match_time_str,
         )
         day_high_entered.append(
             ActivePosition(
@@ -1000,6 +1001,7 @@ def _build_dashboard_snapshot(
             config.execution,
             entry_vwap=entry.entry_vwap,
             currently_limit_up_locked=day_high_limit_up_locked.get(symbol, False),
+            current_match_time_str=match_time_str,
         )
         exit_rows.append(
             SignalDayHighExitRow(

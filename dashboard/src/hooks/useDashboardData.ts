@@ -171,12 +171,18 @@ function normalizeSignalDayHighSelectionRows(rawRows: unknown): SignalDayHighSel
         vol_ratio: toNumber(row.vol_ratio),
         is_disposition: toBoolean(row.is_disposition),
         is_prev_day_limit_up: toBoolean(row.is_prev_day_limit_up),
+        pass_symbol_valid: row.pass_symbol_valid === undefined ? true : toBoolean(row.pass_symbol_valid),
+        pass_group_validity: row.pass_group_validity === undefined ? true : toBoolean(row.pass_group_validity),
         pass_group_rank: toBoolean(row.pass_group_rank),
+        pass_entry_min_group_rank:
+          row.pass_entry_min_group_rank === undefined ? true : toBoolean(row.pass_entry_min_group_rank),
         pass_member_rank: toBoolean(row.pass_member_rank),
         pass_raw_rank: toBoolean(row.pass_raw_rank),
         pass_vwap_band: toBoolean(row.pass_vwap_band),
         pass_disposition_block: toBoolean(row.pass_disposition_block),
         pass_prev_day_limit_up: toBoolean(row.pass_prev_day_limit_up),
+        pass_entry_max_vol_ratio:
+          row.pass_entry_max_vol_ratio === undefined ? true : toBoolean(row.pass_entry_max_vol_ratio),
       }
     })
     .filter((row): row is SignalDayHighSelectionRow => row !== null)

@@ -27,6 +27,7 @@ def _make_config(
     *,
     member_cond1_enabled: bool = True,
     entry_max_vol_ratio: float = 0.0,
+    entry_min_group_rank: int = 0,
     is_weighted_avg: bool = False,
     entry_max_vwap_pct_chg: float = 0.0,
 ) -> StrongGroupConfig:
@@ -55,7 +56,7 @@ def _make_config(
         member_cond4_enabled=False,
         entry_min_vwap_pct_chg=0.0,
         entry_max_vwap_pct_chg=entry_max_vwap_pct_chg,
-        entry_min_group_rank=0,
+        entry_min_group_rank=entry_min_group_rank,
         require_raw_m1=False,
         block_disposition_entry=False,
         entry_max_vol_ratio=entry_max_vol_ratio,
@@ -67,6 +68,7 @@ def _make_evaluator(
     *,
     member_cond1_enabled: bool = True,
     entry_max_vol_ratio: float = 0.0,
+    entry_min_group_rank: int = 0,
     is_weighted_avg: bool = False,
     trade_mode: str = "long",
     symbol_to_groups: dict[str, list[str]] | None = None,
@@ -88,6 +90,7 @@ def _make_evaluator(
         config=_make_config(
             member_cond1_enabled=member_cond1_enabled,
             entry_max_vol_ratio=entry_max_vol_ratio,
+            entry_min_group_rank=entry_min_group_rank,
             is_weighted_avg=is_weighted_avg,
         ),
         symbol_to_groups=symbol_to_groups,
@@ -230,3 +233,36 @@ def test_no_rolling_volume_query_when_no_enabled_filter_or_entry_ratio_condition
         91000000000,
         False,
     ) is False
+
+
+def test_day_high_selection_explanation_rejects_entry_min_group_rank_like_replay() -> None:
+    ev = _make_evaluator(member_cond1_enabled=False, entry_min_group_rank=2)
+    idx = IndexData(vwap=1_010_000.0)
+
+    qualified = ev.on_tick(idx, "AAA", 1_010_000, 100, 91000000000, 91000000000, False)
+    row = ev.explain_day_high_selection("AAA", idx, 1_010_000)
+
+    assert qualified is False
+    assert row.group_rank == 1
+    assert row.member_rank == 1
+    assert row.raw_member_rank == 1
+    assert row.pass_entry_min_group_rank is False
+    assert row.selected is False
+    assert row.rejection_reason == "entry_min_group_rank"
+
+
+def test_day_high_selection_explanation_rejects_entry_max_vol_ratio_like_replay() -> None:
+    ev = _make_evaluator(member_cond1_enabled=False, entry_max_vol_ratio=1.0)
+    idx = IndexData(vwap=1_010_000.0)
+
+    qualified = ev.on_tick(idx, "AAA", 1_010_000, 100, 91000000000, 91000000000, False)
+    row = ev.explain_day_high_selection("AAA", idx, 1_010_000)
+
+    assert qualified is False
+    assert row.group_rank == 1
+    assert row.member_rank == 1
+    assert row.raw_member_rank == 1
+    assert row.vol_ratio >= 1.0
+    assert row.pass_entry_max_vol_ratio is False
+    assert row.selected is False
+    assert row.rejection_reason == "entry_max_vol_ratio"

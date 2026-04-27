@@ -41,9 +41,14 @@ export function DayHighSelectionTable({ rows }: { rows: SignalDayHighSelectionRo
               <td className="text-right">{row.vol_ratio.toFixed(2)}</td>
               <td className="text-right">{row.month_trading_val.toLocaleString()}</td>
               <td>
-                G {passLabel(row.pass_group_rank)} / M {passLabel(row.pass_member_rank)} / R {passLabel(row.pass_raw_rank)}
+                G {passLabel(row.pass_group_rank)} / M {passLabel(row.pass_member_rank)} / R{' '}
+                {passLabel(row.pass_raw_rank)}
                 <br />
-                VB {passLabel(row.pass_vwap_band)} / Disp {passLabel(row.pass_disposition_block)} / PrevLU {passLabel(row.pass_prev_day_limit_up)}
+                Valid {passLabel(row.pass_symbol_valid && row.pass_group_validity)} / MinG{' '}
+                {passLabel(row.pass_entry_min_group_rank)}
+                <br />
+                VB {passLabel(row.pass_vwap_band)} / Vol {passLabel(row.pass_entry_max_vol_ratio)} / Disp{' '}
+                {passLabel(row.pass_disposition_block)} / PrevLU {passLabel(row.pass_prev_day_limit_up)}
               </td>
               <td className={row.selected ? 'text-green' : 'text-red'}>{row.selected ? 'yes' : 'no'}</td>
               <td>{row.rejection_reason || '-'}</td>
