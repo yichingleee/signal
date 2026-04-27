@@ -234,6 +234,111 @@ class SignalDayHighPhaseCounts:
 
 
 @dataclass(slots=True)
+class SignalDayHighSelectionRow:
+    """Per-symbol stock-selection explanation for DayHigh."""
+
+    symbol: str = ""
+    name: str = ""
+    group_name: str = ""
+    selected: bool = False
+    rejection_reason: str = ""
+    group_rank: int = 0
+    member_rank: int = 0
+    raw_member_rank: int = 0
+    m1_symbol: str = ""
+    current_price: float = 0.0
+    vwap: float = 0.0
+    vwap_pct_chg: float = 0.0
+    month_trading_val: int = 0
+    vol_ratio: float = 0.0
+    is_disposition: bool = False
+    is_prev_day_limit_up: bool = False
+    pass_group_rank: bool = False
+    pass_member_rank: bool = False
+    pass_raw_rank: bool = False
+    pass_vwap_band: bool = False
+    pass_disposition_block: bool = False
+    pass_prev_day_limit_up: bool = False
+
+
+@dataclass(slots=True)
+class SignalDayHighEntryRow:
+    """Per-symbol entry-gate explanation for DayHigh."""
+
+    symbol: str = ""
+    name: str = ""
+    group_name: str = ""
+    phase: SignalDayHighPhase = "tracking"
+    trigger_time: str = ""
+    current_price: float = 0.0
+    established_high: float = 0.0
+    pullback_low: float = 0.0
+    day_high_group_limit_up_count: int = 0
+    day_high_group_limit_up_limit: int = 0
+    day_high_group_limit_up_passed: bool = True
+    filter_entry_time_limit: bool = True
+    filter_prev_day_limit_up: bool = True
+    filter_no_entry_friday: bool = True
+    filter_max_0050_entry_chg: bool = True
+    filter_max_0050_intra_chg: bool = True
+    filter_volatility_pause: bool = True
+    filter_already_holding: bool = True
+    filter_single_forbidden: bool = True
+    filter_max_entry_price: bool = True
+    allowed: bool = False
+    entered: bool = False
+    block_reason: str = ""
+
+
+@dataclass(slots=True)
+class SignalDayHighExitRow:
+    """Exit-policy and outcome explanation for DayHigh positions."""
+
+    symbol: str = ""
+    name: str = ""
+    group_name: str = ""
+    status: Literal["open", "closed"] = "open"
+    entry_price: float = 0.0
+    current_price: float = 0.0
+    pnl_pct: float = 0.0
+    entry_time: str = ""
+    exit_time: str = ""
+    stop_basis: str = ""
+    stop_anchor: float = 0.0
+    stop_price: float = 0.0
+    time_exit_deadline: str = ""
+    take_profit_enabled: bool = False
+    bailout_enabled: bool = False
+    hold_overnight_on_limit_up: bool = False
+    currently_limit_up_locked: bool = False
+    overnight_eligible_now: bool = False
+    final_leave_cause: str = ""
+
+
+@dataclass(slots=True)
+class SignalDayHighLogicFunnel:
+    """DayHigh flow summary and block reasons."""
+
+    selected: int = 0
+    armed: int = 0
+    blocked: int = 0
+    entered: int = 0
+    holding: int = 0
+    exited: int = 0
+    block_reasons: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class SignalDayHighLogicSnapshot:
+    """Structured explainability payload for DayHigh."""
+
+    selection_rows: list[SignalDayHighSelectionRow] = field(default_factory=list)
+    entry_rows: list[SignalDayHighEntryRow] = field(default_factory=list)
+    exit_rows: list[SignalDayHighExitRow] = field(default_factory=list)
+    funnel: SignalDayHighLogicFunnel = field(default_factory=SignalDayHighLogicFunnel)
+
+
+@dataclass(slots=True)
 class SignalDayHighMonitorSnapshot:
     """SignalDayHigh dashboard summary."""
 
@@ -247,6 +352,7 @@ class SignalDayHighMonitorSnapshot:
     pullback: int = 0
     triggered: int = 0
     entries: int = 0
+    logic: SignalDayHighLogicSnapshot = field(default_factory=SignalDayHighLogicSnapshot)
 
 
 # ── Top-level snapshot ────────────────────────────────────────────────────

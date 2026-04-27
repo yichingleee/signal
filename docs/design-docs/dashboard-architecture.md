@@ -69,10 +69,15 @@ The top-level snapshot contains:
 - `signal_day_high`
 - `modules`
 
-`signal_day_high` is a two-layer model:
+`signal_day_high` is a three-layer model:
 - `rows`: per-symbol state machine rows with explicit phase (`tracking`, `pullback`, `triggered`, `holding`, `exited`) and preserved trigger context (`last_trigger_high`, `last_trigger_pullback_low`, timestamps).
 - `preparing` / `entered` / `exited`: active lifecycle slices for open/closed position cards.
 - `phase_counts`: explicit count object that the overview and DayHigh page use for strategy-state summaries.
+- `logic`: DayHigh explainability payload sourced from engine decisions.
+  - `selection_rows`: strong-group stock-selection qualification and rejection reasons.
+  - `entry_rows`: DayHigh-specific group-limit-up gate plus shared entry-filter pass/fail flags and final block reason.
+  - `exit_rows`: open-position stop/time/overnight policy values and closed-trade leave causes.
+  - `funnel`: compact `selected/armed/blocked/holding` counters and block-reason counts.
 
 Important design detail: the frontend also normalizes replay payloads that still use stored `dashboard_*` field names. That compatibility logic lives in `useDashboardData.ts`, which lets replay snapshots and live snapshots feed the same React components.
 
@@ -107,30 +112,31 @@ It renders:
 - strong stocks via `SinglesTable`
 - VWAP watchlist via `VWAPTable`
 - cross-signal summaries via `SignalSummary`
-- Signal B and SignalDayHigh tables inside collapsible sections
+- Signal B and SignalDayHigh sections inside collapsible sections
 - unavailable parity cards for burst groups, intraday burst stocks, and Signal C
 - toast notifications for `near_vwap`, Signal B `trade_zone` or `triggered`, and SignalDayHigh `pullback` or `triggered`
 
 Section open/closed state is persisted in browser `localStorage` under `tw-signal-dashboard-sections`.
 
+The DayHigh overview summary uses `signal_day_high.logic.funnel` to expose
+`selected / armed / blocked / holding`, and points operators to `/day-high` for
+full strategy explainability details.
+
 ### 5.4 Signal lifecycle pages
 
-`SignalAMonitor`, `SignalAShortMonitor`, and `DayHighMonitor` share the same layout pattern through `components/signal/SignalMonitorLayout.tsx`.
+`SignalAMonitor` and `SignalAShortMonitor` share the generic lifecycle layout
+through `components/signal/SignalMonitorLayout.tsx`.
 
-DayHigh now uses a two-stage pattern on the same page:
-- `DayHighPhaseBar` renders phase counts for strategy-state progression (`tracking` / `pullback` / `triggered` / `holding`).
-- The DayHigh route then renders state rows for the same snapshot rows before the lifecycle cards.
+DayHigh now uses an explainability-first route order:
+- `DayHighPhaseBar` for phase counts.
+- `DayHighSelectionTable` for strong-group stock-selection logic.
+- `SignalDayHighTable` for anchored-high / pullback / trigger progression.
+- `DayHighEntryDecisionTable` for group-limit-up and entry-filter outcomes.
+- lifecycle cards plus `DayHighExitPolicyCards` for real stop/time/overnight
+  policy and explicit leave-cause text.
 
-`SignalAMonitor` and `SignalAShortMonitor` remain anchored to generic lifecycle counters and cards.
-
-The shared layout always shows:
-- counters
-- preparing cards
-- active position cards
-- exited trade cards
-- a monitor table when the page needs per-symbol rows
-
-This keeps the signal-family pages visually aligned while letting each route supply its own data slice.
+This keeps Signal A routes stable while giving DayHigh a dedicated surface for
+selection, entry-gate, and exit-policy explanations.
 
 ## 6. Transport behavior in the browser
 

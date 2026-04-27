@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from tw_signal_engine.config.strategy_config import ExecutionConfig, TradeMode
 from tw_signal_engine.execution.position_sizing import compute_entry_quantity
 from tw_signal_engine.execution.signal_policy import policy_for_signal
@@ -16,10 +18,103 @@ from tw_signal_engine.state.symbol_state import IndexData
 PRICE_SCALE = 10000.0
 
 
+@dataclass(slots=True, frozen=True)
+class EntryFilterEvaluation:
+    """Structured entry-filter evaluation shared by execution and dashboard."""
+
+    allowed: bool
+    block_reason: str | None
+    entry_time_limit: bool
+    prev_day_limit_up: bool
+    no_entry_friday: bool
+    max_0050_entry_chg: bool
+    max_0050_intra_chg: bool
+    volatility_pause: bool
+    already_holding: bool
+    single_forbidden: bool
+    max_entry_price: bool
+
+
 def _entry_fill_price(tick: MarketTick, trade_mode: TradeMode) -> int:
     if trade_mode == "short":
         return tick.bid[0].price if tick.bid[0].price > 0 else tick.match.price
     return tick.ask[0].price if tick.ask[0].price > 0 else tick.match.price
+
+
+def evaluate_entry_filters(
+    config: ExecutionConfig,
+    trade_mode: TradeMode,
+    tick: MarketTick,
+    match_type: str,
+    signal_type: str,
+    pos: PositionState,
+    is_friday: bool,
+    p0050_prev: int,
+    p0050_latest: int,
+    market_open_chg_pct: float,
+    strong_single_forbidden: dict[str, bool] | None = None,
+) -> EntryFilterEvaluation:
+    """Evaluate entry filters and return pass/fail flags with the first block reason."""
+    del signal_type  # kept for API parity; current filters do not branch by signal.
+
+    entry_time_limit = tick.match_time_str < config.entry_time_limit
+    prev_day_limit_up = not (config.filter_prev_day_limit_up and tick.prev_limit_up)
+    no_entry_friday = not (config.no_entry_friday and is_friday)
+
+    max_0050_entry_chg = True
+    if config.max_0050_entry_chg > 0 and p0050_prev > 0 and p0050_latest > 0:
+        chg = (p0050_latest - p0050_prev) / p0050_prev * 100.0
+        max_0050_entry_chg = chg < config.max_0050_entry_chg
+
+    max_0050_intra_chg = True
+    if config.max_0050_intra_chg < 99 and p0050_prev > 0 and p0050_latest > 0:
+        entry_chg = (p0050_latest - p0050_prev) / p0050_prev * 100.0
+        intra_chg = entry_chg - market_open_chg_pct
+        max_0050_intra_chg = intra_chg < config.max_0050_intra_chg
+
+    volatility_pause = not (config.disposition_stocks_enabled and tick.volatility_pause)
+    already_holding = abs(pos.stocks.get(tick.symbol, 0)) <= 0.001
+    single_forbidden = not (
+        match_type == "StrongSingle"
+        and strong_single_forbidden is not None
+        and strong_single_forbidden.get(tick.symbol, False)
+    )
+    current_price = _entry_fill_price(tick, trade_mode) / PRICE_SCALE
+    max_entry_price = not (config.max_entry_price > 0 and current_price > config.max_entry_price)
+
+    block_reason: str | None = None
+    if not entry_time_limit:
+        block_reason = "entry_time_limit"
+    elif not prev_day_limit_up:
+        block_reason = "prev_day_limit_up"
+    elif not no_entry_friday:
+        block_reason = "no_entry_friday"
+    elif not max_0050_entry_chg:
+        block_reason = "max_0050_entry_chg"
+    elif not max_0050_intra_chg:
+        block_reason = "max_0050_intra_chg"
+    elif not volatility_pause:
+        block_reason = "volatility_pause"
+    elif not already_holding:
+        block_reason = "already_holding"
+    elif not single_forbidden:
+        block_reason = "single_forbidden"
+    elif not max_entry_price:
+        block_reason = "max_entry_price"
+
+    return EntryFilterEvaluation(
+        allowed=block_reason is None,
+        block_reason=block_reason,
+        entry_time_limit=entry_time_limit,
+        prev_day_limit_up=prev_day_limit_up,
+        no_entry_friday=no_entry_friday,
+        max_0050_entry_chg=max_0050_entry_chg,
+        max_0050_intra_chg=max_0050_intra_chg,
+        volatility_pause=volatility_pause,
+        already_holding=already_holding,
+        single_forbidden=single_forbidden,
+        max_entry_price=max_entry_price,
+    )
 
 
 def should_enter(
@@ -36,31 +131,20 @@ def should_enter(
     strong_single_forbidden: dict[str, bool] | None = None,
 ) -> tuple[bool, str | None]:
     """Check all entry filters. Returns (allowed, block_reason)."""
-    if tick.match_time_str >= config.entry_time_limit:
-        return False, "entry_time_limit"
-    if config.filter_prev_day_limit_up and tick.prev_limit_up:
-        return False, "prev_day_limit_up"
-    if config.no_entry_friday and is_friday:
-        return False, "no_entry_friday"
-    if config.max_0050_entry_chg > 0 and p0050_prev > 0 and p0050_latest > 0:
-        chg = (p0050_latest - p0050_prev) / p0050_prev * 100.0
-        if chg >= config.max_0050_entry_chg:
-            return False, "max_0050_entry_chg"
-    if config.max_0050_intra_chg < 99 and p0050_prev > 0 and p0050_latest > 0:
-        entry_chg = (p0050_latest - p0050_prev) / p0050_prev * 100.0
-        intra_chg = entry_chg - market_open_chg_pct
-        if intra_chg >= config.max_0050_intra_chg:
-            return False, "max_0050_intra_chg"
-    if config.disposition_stocks_enabled and tick.volatility_pause:
-        return False, "volatility_pause"
-    if abs(pos.stocks.get(tick.symbol, 0)) > 0.001:
-        return False, "already_holding"
-    if match_type == "StrongSingle" and strong_single_forbidden and strong_single_forbidden.get(tick.symbol, False):
-        return False, "single_forbidden"
-    current_price = _entry_fill_price(tick, trade_mode) / PRICE_SCALE
-    if config.max_entry_price > 0 and current_price > config.max_entry_price:
-        return False, "max_entry_price"
-    return True, None
+    evaluation = evaluate_entry_filters(
+        config=config,
+        trade_mode=trade_mode,
+        tick=tick,
+        match_type=match_type,
+        signal_type=signal_type,
+        pos=pos,
+        is_friday=is_friday,
+        p0050_prev=p0050_prev,
+        p0050_latest=p0050_latest,
+        market_open_chg_pct=market_open_chg_pct,
+        strong_single_forbidden=strong_single_forbidden,
+    )
+    return evaluation.allowed, evaluation.block_reason
 
 
 def execute_entry(

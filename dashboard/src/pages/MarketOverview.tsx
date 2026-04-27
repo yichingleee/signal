@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { GroupGrid } from '../components/groups/GroupGrid'
 import { SectionToggle } from '../components/overview/SectionToggle'
 import { SignalBTable, SignalDayHighTable } from '../components/overview/SignalTables'
@@ -108,6 +109,13 @@ export function MarketOverview({ snapshot }: Props) {
             <SignalBTable rows={snapshot.signal_b.rows} />
           </SectionToggle>
           <SectionToggle id="dayHigh" title="SignalDayHigh Summary" count={snapshot.signal_day_high.rows.length} enabled={sections.dayHigh} onToggle={toggleSection}>
+            <div className="signal-section" style={{ marginBottom: 0 }}>
+              <div className="text-muted" style={{ fontSize: 12 }}>
+                selected {snapshot.signal_day_high.logic?.funnel.selected ?? 0} / armed {snapshot.signal_day_high.logic?.funnel.armed ?? 0} / blocked {snapshot.signal_day_high.logic?.funnel.blocked ?? 0} / holding {snapshot.signal_day_high.logic?.funnel.holding ?? 0}
+                {' · '}
+                <Link to="/day-high">open full DayHigh monitor</Link>
+              </div>
+            </div>
             <SignalDayHighTable rows={snapshot.signal_day_high.rows} />
           </SectionToggle>
           <SectionToggle id="signalC" title="Signal C Summary" enabled={sections.signalC} onToggle={toggleSection}>

@@ -8,9 +8,13 @@ import type {
   SignalAMonitorSnapshot,
   SignalBMonitorSnapshot,
   SignalCounters,
+  SignalDayHighEntryRow,
+  SignalDayHighExitRow,
+  SignalDayHighLogicSnapshot,
   SignalDayHighMonitorSnapshot,
   SignalDayHighMonitorEntry,
   SignalDayHighPhase,
+  SignalDayHighSelectionRow,
 } from '../types/dashboard'
 
 function hhmmToMinutes(hhmm: string): number {
@@ -43,6 +47,21 @@ const EMPTY_SIGNAL_COUNTERS: SignalCounters = {
   take_profit: 0,
   stop_loss: 0,
   forbidden: 0,
+}
+
+const EMPTY_DAY_HIGH_LOGIC: SignalDayHighLogicSnapshot = {
+  selection_rows: [],
+  entry_rows: [],
+  exit_rows: [],
+  funnel: {
+    selected: 0,
+    armed: 0,
+    blocked: 0,
+    entered: 0,
+    holding: 0,
+    exited: 0,
+    block_reasons: {},
+  },
 }
 
 function toSignalDayHighPhase(raw: unknown): SignalDayHighPhase {
@@ -129,6 +148,139 @@ function normalizeSignalDayHighPhaseCounts(source: Record<string, unknown> | nul
   }
 }
 
+function normalizeSignalDayHighSelectionRows(rawRows: unknown): SignalDayHighSelectionRow[] {
+  if (!Array.isArray(rawRows)) return []
+  return rawRows
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
+      const row = entry as Record<string, unknown>
+      return {
+        symbol: toString(row.symbol),
+        name: toString(row.name),
+        group_name: toString(row.group_name),
+        selected: toBoolean(row.selected),
+        rejection_reason: toString(row.rejection_reason),
+        group_rank: toNumber(row.group_rank),
+        member_rank: toNumber(row.member_rank),
+        raw_member_rank: toNumber(row.raw_member_rank),
+        m1_symbol: toString(row.m1_symbol),
+        current_price: toNumber(row.current_price),
+        vwap: toNumber(row.vwap),
+        vwap_pct_chg: toNumber(row.vwap_pct_chg),
+        month_trading_val: toNumber(row.month_trading_val),
+        vol_ratio: toNumber(row.vol_ratio),
+        is_disposition: toBoolean(row.is_disposition),
+        is_prev_day_limit_up: toBoolean(row.is_prev_day_limit_up),
+        pass_group_rank: toBoolean(row.pass_group_rank),
+        pass_member_rank: toBoolean(row.pass_member_rank),
+        pass_raw_rank: toBoolean(row.pass_raw_rank),
+        pass_vwap_band: toBoolean(row.pass_vwap_band),
+        pass_disposition_block: toBoolean(row.pass_disposition_block),
+        pass_prev_day_limit_up: toBoolean(row.pass_prev_day_limit_up),
+      }
+    })
+    .filter((row): row is SignalDayHighSelectionRow => row !== null)
+}
+
+function normalizeSignalDayHighEntryRows(rawRows: unknown): SignalDayHighEntryRow[] {
+  if (!Array.isArray(rawRows)) return []
+  return rawRows
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
+      const row = entry as Record<string, unknown>
+      return {
+        symbol: toString(row.symbol),
+        name: toString(row.name),
+        group_name: toString(row.group_name),
+        phase: toSignalDayHighPhase(row.phase),
+        trigger_time: toString(row.trigger_time),
+        current_price: toNumber(row.current_price),
+        established_high: toNumber(row.established_high),
+        pullback_low: toNumber(row.pullback_low),
+        day_high_group_limit_up_count: toNumber(row.day_high_group_limit_up_count),
+        day_high_group_limit_up_limit: toNumber(row.day_high_group_limit_up_limit),
+        day_high_group_limit_up_passed: toBoolean(row.day_high_group_limit_up_passed),
+        filter_entry_time_limit: toBoolean(row.filter_entry_time_limit),
+        filter_prev_day_limit_up: toBoolean(row.filter_prev_day_limit_up),
+        filter_no_entry_friday: toBoolean(row.filter_no_entry_friday),
+        filter_max_0050_entry_chg: toBoolean(row.filter_max_0050_entry_chg),
+        filter_max_0050_intra_chg: toBoolean(row.filter_max_0050_intra_chg),
+        filter_volatility_pause: toBoolean(row.filter_volatility_pause),
+        filter_already_holding: toBoolean(row.filter_already_holding),
+        filter_single_forbidden: toBoolean(row.filter_single_forbidden),
+        filter_max_entry_price: toBoolean(row.filter_max_entry_price),
+        allowed: toBoolean(row.allowed),
+        entered: toBoolean(row.entered),
+        block_reason: toString(row.block_reason),
+      }
+    })
+    .filter((row): row is SignalDayHighEntryRow => row !== null)
+}
+
+function normalizeSignalDayHighExitRows(rawRows: unknown): SignalDayHighExitRow[] {
+  if (!Array.isArray(rawRows)) return []
+  return rawRows
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
+      const row = entry as Record<string, unknown>
+      return {
+        symbol: toString(row.symbol),
+        name: toString(row.name),
+        group_name: toString(row.group_name),
+        status: row.status === 'closed' ? 'closed' : 'open',
+        entry_price: toNumber(row.entry_price),
+        current_price: toNumber(row.current_price),
+        pnl_pct: toNumber(row.pnl_pct),
+        entry_time: toString(row.entry_time),
+        exit_time: toString(row.exit_time),
+        stop_basis: toString(row.stop_basis),
+        stop_anchor: toNumber(row.stop_anchor),
+        stop_price: toNumber(row.stop_price),
+        time_exit_deadline: toString(row.time_exit_deadline),
+        take_profit_enabled: toBoolean(row.take_profit_enabled),
+        bailout_enabled: toBoolean(row.bailout_enabled),
+        hold_overnight_on_limit_up: toBoolean(row.hold_overnight_on_limit_up),
+        currently_limit_up_locked: toBoolean(row.currently_limit_up_locked),
+        overnight_eligible_now: toBoolean(row.overnight_eligible_now),
+        final_leave_cause: toString(row.final_leave_cause),
+      }
+    })
+    .filter((row): row is SignalDayHighExitRow => row !== null)
+}
+
+function normalizeSignalDayHighLogic(raw: unknown): SignalDayHighLogicSnapshot {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return EMPTY_DAY_HIGH_LOGIC
+  }
+  const source = raw as Record<string, unknown>
+  const funnelRaw =
+    source.funnel && typeof source.funnel === 'object' && !Array.isArray(source.funnel)
+      ? (source.funnel as Record<string, unknown>)
+      : null
+  const blockReasonsRaw =
+    funnelRaw?.block_reasons && typeof funnelRaw.block_reasons === 'object' && !Array.isArray(funnelRaw.block_reasons)
+      ? (funnelRaw.block_reasons as Record<string, unknown>)
+      : {}
+  const block_reasons: Record<string, number> = {}
+  Object.entries(blockReasonsRaw).forEach(([key, value]) => {
+    block_reasons[key] = toNumber(value)
+  })
+  return {
+    selection_rows: normalizeSignalDayHighSelectionRows(source.selection_rows),
+    entry_rows: normalizeSignalDayHighEntryRows(source.entry_rows),
+    exit_rows: normalizeSignalDayHighExitRows(source.exit_rows),
+    funnel: {
+      selected: toNumber(funnelRaw?.selected),
+      armed: toNumber(funnelRaw?.armed),
+      blocked: toNumber(funnelRaw?.blocked),
+      entered: toNumber(funnelRaw?.entered),
+      holding: toNumber(funnelRaw?.holding),
+      exited: toNumber(funnelRaw?.exited),
+      block_reasons,
+    },
+  }
+}
+
 function normalizeSignalDayHighSnapshot(raw: unknown): SignalDayHighMonitorSnapshot {
   const source =
     raw && typeof raw === 'object' && !Array.isArray(raw)
@@ -159,6 +311,7 @@ function normalizeSignalDayHighSnapshot(raw: unknown): SignalDayHighMonitorSnaps
     pullback: typeof source?.pullback === 'number' ? source.pullback : 0,
     triggered: typeof source?.triggered === 'number' ? source.triggered : 0,
     entries: typeof source?.entries === 'number' ? source.entries : 0,
+    logic: normalizeSignalDayHighLogic(source?.logic),
   }
 }
 

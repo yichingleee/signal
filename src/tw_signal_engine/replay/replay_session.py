@@ -12,8 +12,13 @@ from typing import Protocol
 from tw_signal_engine.config.load_legacy_ini import load_legacy_ini
 from tw_signal_engine.config.normalize_strategy_config import normalize_strategy_config
 from tw_signal_engine.config.strategy_config import NormalizedStrategyConfig, SignalAShortConfig, TradeMode
-from tw_signal_engine.execution.create_entry_trade import execute_entry, should_enter
-from tw_signal_engine.execution.signal_policy import policy_for_signal
+from tw_signal_engine.execution.create_entry_trade import (
+    EntryFilterEvaluation,
+    evaluate_entry_filters,
+    execute_entry,
+    should_enter,
+)
+from tw_signal_engine.execution.signal_policy import describe_day_high_exit_policy, policy_for_signal
 from tw_signal_engine.execution.trade_ledger import on_tick_exit
 from tw_signal_engine.market_data.day_bar_loader import load_0050_open
 from tw_signal_engine.market_data.file_replay_provider import FileReplayProvider
@@ -60,10 +65,15 @@ from tw_signal_engine.server.dashboard_snapshot import (
     SignalBMonitorEntry,
     SignalBMonitorSnapshot,
     SignalCounters,
+    SignalDayHighEntryRow,
+    SignalDayHighExitRow,
+    SignalDayHighLogicFunnel,
+    SignalDayHighLogicSnapshot,
     SignalDayHighMonitorEntry,
     SignalDayHighMonitorSnapshot,
     SignalDayHighPhase,
     SignalDayHighPhaseCounts,
+    SignalDayHighSelectionRow,
     VWAPMonitorEntry,
 )
 from tw_signal_engine.signals.evaluate_signal_a import evaluate_signal_a
@@ -331,7 +341,51 @@ def _legacy_signal_a_short_config(config: NormalizedStrategyConfig) -> SignalASh
     )
 
 
+def _phase_for_day_high_state(state: SignalDayHighState) -> SignalDayHighPhase:
+    if state.triggered:
+        return "triggered"
+    if state.pullback_confirmed:
+        return "pullback"
+    if state.established_high > 0:
+        return "tracking"
+    return "exited"
+
+
+def _is_day_high_product_spec_match(
+    strong_group: StrongGroupEvaluator,
+    symbol: str,
+    config: NormalizedStrategyConfig,
+) -> bool:
+    """DayHigh may only consider the current strong-group M1/R1 candidate."""
+    match_info = strong_group.last_match_info.get(symbol)
+    if match_info is None or not match_info.group_name:
+        return False
+    group_valid_top_n = config.strong_group.group_valid_top_n or 10
+    return (
+        1 <= match_info.group_rank <= group_valid_top_n
+        and match_info.member_rank == 1
+        and match_info.raw_member_rank == 1
+    )
+
+
+def _default_entry_filter_evaluation() -> EntryFilterEvaluation:
+    return EntryFilterEvaluation(
+        allowed=True,
+        block_reason=None,
+        entry_time_limit=True,
+        prev_day_limit_up=True,
+        no_entry_friday=True,
+        max_0050_entry_chg=True,
+        max_0050_intra_chg=True,
+        volatility_pause=True,
+        already_holding=True,
+        single_forbidden=True,
+        max_entry_price=True,
+    )
+
+
 def _build_dashboard_snapshot(
+    config: NormalizedStrategyConfig,
     match_time_str: int,
     tick_count: int,
     strong_group: StrongGroupEvaluator,
@@ -344,6 +398,8 @@ def _build_dashboard_snapshot(
     signal_a_short_map: dict[str, SignalAState],
     signal_b_map: dict[str, SignalBState],
     signal_day_high_map: dict[str, SignalDayHighState],
+    day_high_entry_logic: dict[str, SignalDayHighEntryRow],
+    day_high_limit_up_locked: dict[str, bool],
     pos: PositionState,
     completed_trades: list[TradeRecord],
     trade_mode: str,
@@ -605,22 +661,29 @@ def _build_dashboard_snapshot(
     def _fmt_time(raw: int) -> str:
         return str(raw) if raw > 0 else ""
 
+    def _is_current_day_high_selection(symbol: str) -> bool:
+        explain_fn = getattr(strong_group, "explain_day_high_selection", None)
+        if callable(explain_fn):
+            return bool(
+                explain_fn(
+                    symbol=symbol,
+                    idx=latest_idx_map.get(symbol),
+                    price_raw=last_price.get(symbol, 0),
+                ).selected
+            )
+        return _is_day_high_product_spec_match(strong_group, symbol, config)
+
     for symbol, day_high_state in signal_day_high_map.items():
         if symbol in day_high_open_symbols:
+            continue
+        if not _is_current_day_high_selection(symbol):
             continue
         if not (day_high_state.established_high > 0 or day_high_state.triggered or day_high_state.entries > 0):
             continue
         ref = f1_map.get(symbol)
         name = getattr(ref, "name", symbol)
         group_name = symbol_to_group.get(symbol, "")
-        if day_high_state.triggered:
-            phase: SignalDayHighPhase = "triggered"
-        elif day_high_state.pullback_confirmed:
-            phase = "pullback"
-        elif day_high_state.established_high > 0:
-            phase = "tracking"
-        else:
-            phase = "exited"
+        phase = _phase_for_day_high_state(day_high_state)
         day_high_rows.append(
             SignalDayHighMonitorEntry(
                 symbol=symbol,
@@ -669,7 +732,10 @@ def _build_dashboard_snapshot(
                         ),
                         vwap=idx_for_symbol.vwap / 10000,
                         day_low=idx_for_symbol.day_low / 10000 if idx_for_symbol.day_low > 0 else 0.0,
-                        stop_loss=0.0,
+                        stop_loss=describe_day_high_exit_policy(
+                            config.execution,
+                            entry_vwap=idx_for_symbol.vwap / 10000,
+                        ).stop_price,
                         near_vwap_pv_ratio=0.0,
                         side="long",
                     )
@@ -689,6 +755,11 @@ def _build_dashboard_snapshot(
             pnl_pct = 0.0
         ref = f1_map.get(symbol)
         name = getattr(ref, "name", symbol)
+        day_high_policy = describe_day_high_exit_policy(
+            config.execution,
+            entry_vwap=entry.entry_vwap,
+            currently_limit_up_locked=day_high_limit_up_locked.get(symbol, False),
+        )
         day_high_entered.append(
             ActivePosition(
                 symbol=symbol,
@@ -698,7 +769,7 @@ def _build_dashboard_snapshot(
                 entry_price=entry.entry_price,
                 current_price=price_raw / 10000,
                 pnl_pct=pnl_pct,
-                stop_loss=0.0,
+                stop_loss=day_high_policy.stop_price,
                 take_profit=0.0,
                 day_high=entry.day_high_at_entry,
                 entry_time=str(entry.entry_time_raw),
@@ -799,6 +870,224 @@ def _build_dashboard_snapshot(
         "holding": sum(1 for row in day_high_rows if row.phase == "holding"),
         "exited": sum(1 for row in day_high_rows if row.phase == "exited"),
     }
+
+    day_high_relevant_symbols: set[str] = {
+        symbol for symbol in signal_day_high_map if _is_current_day_high_selection(symbol)
+    }
+    day_high_relevant_symbols |= {
+        symbol
+        for symbol, entry in pos.open_trades.items()
+        if entry.signal_type == "SignalDayHigh"
+    }
+    day_high_relevant_symbols |= {
+        trade.symbol
+        for trade in completed_trades[-200:]
+        if trade.signal_type == "SignalDayHigh"
+    }
+    day_high_relevant_symbols |= set(day_high_entry_logic.keys())
+    day_high_group_valid_top_n = config.strong_group.group_valid_top_n or 10
+    day_high_relevant_symbols |= {
+        symbol
+        for symbol, info in strong_group.last_match_info.items()
+        if (
+            info.group_name
+            and 1 <= info.group_rank <= day_high_group_valid_top_n
+            and info.member_rank == 1
+            and info.raw_member_rank == 1
+        )
+    }
+
+    selection_rows: list[SignalDayHighSelectionRow] = []
+    for symbol in sorted(day_high_relevant_symbols):
+        idx_for_symbol = latest_idx_map.get(symbol)
+        price_raw = last_price.get(symbol, 0)
+        if (
+            idx_for_symbol is None
+            and price_raw <= 0
+            and symbol not in strong_group.last_match_info
+            and symbol not in pos.open_trades
+        ):
+            continue
+        explain_fn = getattr(strong_group, "explain_day_high_selection", None)
+        if callable(explain_fn):
+            selection_rows.append(
+                explain_fn(
+                    symbol=symbol,
+                    idx=idx_for_symbol,
+                    price_raw=price_raw,
+                )
+            )
+        else:
+            info = strong_group.last_match_info.get(symbol)
+            name = getattr(f1_map.get(symbol), "name", symbol)
+            selection_rows.append(
+                SignalDayHighSelectionRow(
+                    symbol=symbol,
+                    name=name,
+                    group_name=info.group_name if info is not None else symbol_to_group.get(symbol, ""),
+                    selected=(info.member_rank == 1 if info is not None else False),
+                    group_rank=info.group_rank if info is not None else 0,
+                    member_rank=info.member_rank if info is not None else 0,
+                    raw_member_rank=info.raw_member_rank if info is not None else 0,
+                    m1_symbol=info.m1_symbol if info is not None else "",
+                    current_price=price_raw / 10000 if price_raw > 0 else 0.0,
+                    vwap=(
+                        idx_for_symbol.vwap / 10000
+                        if idx_for_symbol is not None and idx_for_symbol.vwap > 0
+                        else 0.0
+                    ),
+                )
+            )
+
+    entry_rows_by_symbol: dict[str, SignalDayHighEntryRow] = dict(day_high_entry_logic)
+    for row in day_high_rows:
+        if row.phase not in {"pullback", "triggered", "holding"}:
+            continue
+        if row.symbol in entry_rows_by_symbol:
+            continue
+        group_name = row.group_name
+        match_info = strong_group.last_match_info.get(row.symbol)
+        if match_info is not None and match_info.group_name:
+            group_name = match_info.group_name
+        group_limit_up_count = strong_group.get_group_limit_up_count(group_name) if group_name else 0
+        group_limit_up_passed = (
+            group_limit_up_count < config.signal_day_high.max_group_limit_up_count
+            if group_name
+            else True
+        )
+        waiting_reason = ""
+        if row.phase == "pullback":
+            waiting_reason = "waiting_breakout"
+        elif row.phase == "triggered" and not group_limit_up_passed:
+            waiting_reason = "day_high_group_limit_up_count"
+        elif row.phase == "triggered":
+            waiting_reason = "pending_entry_filters"
+        entry_rows_by_symbol[row.symbol] = SignalDayHighEntryRow(
+            symbol=row.symbol,
+            name=row.name,
+            group_name=group_name,
+            phase=row.phase,
+            trigger_time=row.trigger_time,
+            current_price=last_price.get(row.symbol, 0) / 10000,
+            established_high=row.established_high,
+            pullback_low=row.pullback_low,
+            day_high_group_limit_up_count=group_limit_up_count,
+            day_high_group_limit_up_limit=config.signal_day_high.max_group_limit_up_count,
+            day_high_group_limit_up_passed=group_limit_up_passed,
+            allowed=row.phase == "holding",
+            entered=row.phase == "holding",
+            block_reason=waiting_reason,
+        )
+
+    entry_rows: list[SignalDayHighEntryRow] = sorted(
+        entry_rows_by_symbol.values(),
+        key=lambda row: (row.symbol, row.trigger_time, row.phase),
+    )
+
+    exit_rows: list[SignalDayHighExitRow] = []
+    for symbol, entry in pos.open_trades.items():
+        if entry.signal_type != "SignalDayHigh":
+            continue
+        ref = f1_map.get(symbol)
+        name = getattr(ref, "name", symbol)
+        price_raw = last_price.get(symbol, 0)
+        current_price = price_raw / 10000 if price_raw > 0 else 0.0
+        if entry.entry_price > 0 and current_price > 0:
+            pnl_pct = (current_price - entry.entry_price) / entry.entry_price
+        else:
+            pnl_pct = 0.0
+        policy = describe_day_high_exit_policy(
+            config.execution,
+            entry_vwap=entry.entry_vwap,
+            currently_limit_up_locked=day_high_limit_up_locked.get(symbol, False),
+        )
+        exit_rows.append(
+            SignalDayHighExitRow(
+                symbol=symbol,
+                name=name,
+                group_name=entry.group_name,
+                status="open",
+                entry_price=entry.entry_price,
+                current_price=current_price,
+                pnl_pct=pnl_pct,
+                entry_time=str(entry.entry_time_raw),
+                stop_basis=policy.stop_basis,
+                stop_anchor=policy.stop_anchor,
+                stop_price=policy.stop_price,
+                time_exit_deadline=policy.time_exit_deadline,
+                take_profit_enabled=policy.take_profit_enabled,
+                bailout_enabled=policy.bailout_enabled,
+                hold_overnight_on_limit_up=policy.hold_overnight_on_limit_up,
+                currently_limit_up_locked=policy.currently_limit_up_locked,
+                overnight_eligible_now=policy.overnight_eligible_now,
+            )
+        )
+    for trade in completed_trades[-200:]:
+        if trade.signal_type != "SignalDayHigh":
+            continue
+        ref = f1_map.get(trade.symbol)
+        name = getattr(ref, "name", trade.symbol)
+        policy = describe_day_high_exit_policy(
+            config.execution,
+            entry_vwap=trade.entry_vwap,
+            currently_limit_up_locked=False,
+        )
+        exit_rows.append(
+            SignalDayHighExitRow(
+                symbol=trade.symbol,
+                name=name,
+                group_name=trade.group_name,
+                status="closed",
+                entry_price=trade.entry_price,
+                current_price=trade.exit_price,
+                pnl_pct=trade.return_pct / 100.0,
+                entry_time=str(trade.entry_time_raw),
+                exit_time=str(trade.exit_time_raw),
+                stop_basis=policy.stop_basis,
+                stop_anchor=policy.stop_anchor,
+                stop_price=policy.stop_price,
+                time_exit_deadline=policy.time_exit_deadline,
+                take_profit_enabled=policy.take_profit_enabled,
+                bailout_enabled=policy.bailout_enabled,
+                hold_overnight_on_limit_up=policy.hold_overnight_on_limit_up,
+                currently_limit_up_locked=False,
+                overnight_eligible_now=False,
+                final_leave_cause=trade.final_leave_cause,
+            )
+        )
+
+    block_reasons: dict[str, int] = {}
+    for entry_row in entry_rows:
+        if entry_row.entered or entry_row.allowed:
+            continue
+        reason = entry_row.block_reason
+        if reason in {"", "waiting_breakout", "pending_entry_filters"}:
+            continue
+        block_reasons[reason] = block_reasons.get(reason, 0) + 1
+
+    day_high_logic = SignalDayHighLogicSnapshot(
+        selection_rows=selection_rows,
+        entry_rows=entry_rows,
+        exit_rows=exit_rows,
+        funnel=SignalDayHighLogicFunnel(
+            selected=sum(1 for selection_row in selection_rows if selection_row.selected),
+            armed=phase_counts["pullback"] + phase_counts["triggered"],
+            blocked=sum(
+                1
+                for entry_row in entry_rows
+                if (
+                    not entry_row.allowed
+                    and not entry_row.entered
+                    and entry_row.block_reason not in {"", "waiting_breakout", "pending_entry_filters"}
+                )
+            ),
+            entered=sum(1 for entry_row in entry_rows if entry_row.entered),
+            holding=len(day_high_entered),
+            exited=len(day_high_exited),
+            block_reasons=block_reasons,
+        ),
+    )
+
     day_high_snapshot = SignalDayHighMonitorSnapshot(
         rows=day_high_rows,
         preparing=day_high_preparing,
@@ -810,6 +1099,7 @@ def _build_dashboard_snapshot(
         pullback=phase_counts["pullback"],
         triggered=phase_counts["triggered"] + phase_counts["holding"],
         entries=sum(row.entries for row in day_high_rows),
+        logic=day_high_logic,
     )
 
     modules = [
@@ -1084,6 +1374,8 @@ def run_daily_replay(
     signal_a_short_map: dict[str, SignalAState] = {}
     signal_b_map: dict[str, SignalBState] = {}
     signal_day_high_map: dict[str, SignalDayHighState] = {}
+    day_high_entry_logic: dict[str, SignalDayHighEntryRow] = {}
+    day_high_limit_up_locked: dict[str, bool] = {}
     signal_b_short_warning_emitted = False
     last_price: dict[str, int] = {}
     funnel = FunnelTracker()
@@ -1208,6 +1500,7 @@ def run_daily_replay(
             return
 
         snapshot = _build_dashboard_snapshot(
+            config=config,
             match_time_str=match_time_str,
             tick_count=tick_count,
             strong_group=strong_group,
@@ -1220,6 +1513,8 @@ def run_daily_replay(
             signal_a_short_map=signal_a_short_map,
             signal_b_map=signal_b_map,
             signal_day_high_map=signal_day_high_map,
+            day_high_entry_logic=day_high_entry_logic,
+            day_high_limit_up_locked=day_high_limit_up_locked,
             pos=pos,
             completed_trades=completed_trades,
             trade_mode=config.strategy.trade_mode,
@@ -1343,6 +1638,7 @@ def run_daily_replay(
         symbol = tick.symbol
         f1 = f1_map.get(symbol)
         _apply_limit_up_lock_flag(tick, f1)
+        day_high_limit_up_locked[symbol] = tick.is_limit_up_locked
 
         # Compute index
         if symbol not in index_calc_map:
@@ -1579,18 +1875,25 @@ def run_daily_replay(
             is_signal_day_high = False
             trigger_mt_day_high = "None"
             if config.signal_day_high.enabled and not compatibility_short_mode:
-                if symbol not in signal_day_high_map:
-                    signal_day_high_map[symbol] = SignalDayHighState(symbol=symbol)
-                day_high_match_type = long_match_type if group else "None"
-                is_signal_day_high, trigger_mt_day_high = evaluate_signal_day_high(
-                    signal_day_high_map[symbol],
-                    config.signal_day_high,
-                    tick.match.price,
-                    tick.match_time_str,
-                    tick.match_time_us,
-                    day_high_match_type,
-                    f1,
+                day_high_product_match = group and _is_day_high_product_spec_match(
+                    strong_group,
+                    symbol,
+                    config,
                 )
+                if day_high_product_match and symbol not in signal_day_high_map:
+                    signal_day_high_map[symbol] = SignalDayHighState(symbol=symbol)
+                if day_high_product_match:
+                    is_signal_day_high, trigger_mt_day_high = evaluate_signal_day_high(
+                        signal_day_high_map[symbol],
+                        config.signal_day_high,
+                        tick.match.price,
+                        tick.match_time_str,
+                        tick.match_time_us,
+                        long_match_type,
+                        f1,
+                    )
+                else:
+                    signal_day_high_map.pop(symbol, None)
                 if hooks is not None and hooks.on_signal is not None:
                     hooks.on_signal(symbol, "SignalDayHigh", is_signal_day_high)
 
@@ -1694,13 +1997,34 @@ def run_daily_replay(
 
                 allowed = True
                 block_reason: str | None = None
+                day_high_entry_eval = _default_entry_filter_evaluation()
+                day_high_group_limit_up_count = 0
+                day_high_group_limit_up_passed = True
+                day_high_group_name = ""
                 if selected_signal_type == "SignalDayHigh":
                     mi = strong_group.last_match_info.get(symbol)
-                    group_name = mi.group_name if mi is not None else ""
+                    day_high_group_name = mi.group_name if mi is not None else ""
+                    day_high_entry_eval = evaluate_entry_filters(
+                        config.execution,
+                        selected_trade_mode,
+                        tick,
+                        selected_match_type,
+                        selected_signal_type,
+                        pos,
+                        is_friday,
+                        p0050_prev,
+                        market_gate.p0050_latest,
+                        market_gate.market_open_chg_pct,
+                        strong_single.forbidden if strong_single_enabled_for_entry else None,
+                    )
+                    if day_high_group_name:
+                        day_high_group_limit_up_count = strong_group.get_group_limit_up_count(day_high_group_name)
+                        day_high_group_limit_up_passed = (
+                            day_high_group_limit_up_count < config.signal_day_high.max_group_limit_up_count
+                        )
                     if (
-                        group_name
-                        and strong_group.get_group_limit_up_count(group_name)
-                        >= config.signal_day_high.max_group_limit_up_count
+                        day_high_group_name
+                        and not day_high_group_limit_up_passed
                     ):
                         allowed = False
                         block_reason = "day_high_group_limit_up_count"
@@ -1715,6 +2039,54 @@ def run_daily_replay(
                         is_friday,
                         p0050_prev, market_gate.p0050_latest, market_gate.market_open_chg_pct,
                         strong_single.forbidden if strong_single_enabled_for_entry else None,
+                    )
+                if selected_signal_type == "SignalDayHigh":
+                    day_high_state = signal_day_high_map.get(symbol)
+                    day_high_phase = _phase_for_day_high_state(day_high_state) if day_high_state else "triggered"
+                    established_high = 0.0
+                    pullback_low = 0.0
+                    trigger_time = tick.match_time_str
+                    if day_high_state is not None:
+                        established_high_raw = (
+                            day_high_state.last_trigger_high
+                            if day_high_state.last_trigger_high > 0
+                            else day_high_state.established_high
+                        )
+                        established_high = established_high_raw / 10000 if established_high_raw > 0 else 0.0
+                        pullback_raw = (
+                            day_high_state.last_trigger_pullback_low
+                            if day_high_state.last_trigger_pullback_low > 0
+                            else day_high_state.pullback_low
+                        )
+                        pullback_low = pullback_raw / 10000 if pullback_raw > 0 else 0.0
+                        trigger_time = (
+                            day_high_state.last_trigger_time
+                            if day_high_state.last_trigger_time > 0
+                            else tick.match_time_str
+                        )
+                    day_high_entry_logic[symbol] = SignalDayHighEntryRow(
+                        symbol=symbol,
+                        name=f1.name if f1 is not None else symbol,
+                        group_name=day_high_group_name,
+                        phase=day_high_phase,
+                        trigger_time=str(trigger_time),
+                        current_price=tick.match.price / 10000,
+                        established_high=established_high,
+                        pullback_low=pullback_low,
+                        day_high_group_limit_up_count=day_high_group_limit_up_count,
+                        day_high_group_limit_up_limit=config.signal_day_high.max_group_limit_up_count,
+                        day_high_group_limit_up_passed=day_high_group_limit_up_passed,
+                        filter_entry_time_limit=day_high_entry_eval.entry_time_limit,
+                        filter_prev_day_limit_up=day_high_entry_eval.prev_day_limit_up,
+                        filter_no_entry_friday=day_high_entry_eval.no_entry_friday,
+                        filter_max_0050_entry_chg=day_high_entry_eval.max_0050_entry_chg,
+                        filter_max_0050_intra_chg=day_high_entry_eval.max_0050_intra_chg,
+                        filter_volatility_pause=day_high_entry_eval.volatility_pause,
+                        filter_already_holding=day_high_entry_eval.already_holding,
+                        filter_single_forbidden=day_high_entry_eval.single_forbidden,
+                        filter_max_entry_price=day_high_entry_eval.max_entry_price,
+                        allowed=allowed,
+                        block_reason=block_reason or "",
                     )
                 if allowed:
                     execute_entry(
@@ -1731,6 +2103,10 @@ def run_daily_replay(
                         market_gate.p0050_latest,
                         market_gate.market_open_chg_pct,
                     )
+                    if selected_signal_type == "SignalDayHigh" and symbol in day_high_entry_logic:
+                        day_high_entry_logic[symbol].entered = True
+                        day_high_entry_logic[symbol].allowed = True
+                        day_high_entry_logic[symbol].block_reason = ""
                     # Initialize MAE/MFE tracking at entry price
                     entry_trade = pos.open_trades.get(symbol)
                     if entry_trade is not None:
@@ -1778,6 +2154,7 @@ def run_daily_replay(
     print(f"[TIMING] readFileMerged: {(time.time() - t0) * 1000:.0f} ms")
 
     # 8. Force close remaining positions
+    had_open_positions = any(abs(qty) > 0.001 for qty in pos.stocks.values())
     _finalize_open_positions(
         config,
         pos,
@@ -1791,7 +2168,11 @@ def run_daily_replay(
         hooks=hooks,
         signal_snapshot_writer=signal_snapshot_writer,
     )
-    _emit_minute_callbacks(max(last_match_time_str, config.execution.exit_time_limit), force=True)
+    if had_open_positions:
+        _emit_minute_callbacks(
+            max(last_match_time_str, config.execution.exit_time_limit),
+            force=True,
+        )
 
     # 9. Generate reports
     if write_outputs:

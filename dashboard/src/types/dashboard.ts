@@ -165,6 +165,96 @@ export interface SignalDayHighPhaseCounts {
   exited: number
 }
 
+export interface SignalDayHighSelectionRow {
+  symbol: string
+  name: string
+  group_name: string
+  selected: boolean
+  rejection_reason: string
+  group_rank: number
+  member_rank: number
+  raw_member_rank: number
+  m1_symbol: string
+  current_price: number
+  vwap: number
+  vwap_pct_chg: number
+  month_trading_val: number
+  vol_ratio: number
+  is_disposition: boolean
+  is_prev_day_limit_up: boolean
+  pass_group_rank: boolean
+  pass_member_rank: boolean
+  pass_raw_rank: boolean
+  pass_vwap_band: boolean
+  pass_disposition_block: boolean
+  pass_prev_day_limit_up: boolean
+}
+
+export interface SignalDayHighEntryRow {
+  symbol: string
+  name: string
+  group_name: string
+  phase: SignalDayHighPhase
+  trigger_time: string
+  current_price: number
+  established_high: number
+  pullback_low: number
+  day_high_group_limit_up_count: number
+  day_high_group_limit_up_limit: number
+  day_high_group_limit_up_passed: boolean
+  filter_entry_time_limit: boolean
+  filter_prev_day_limit_up: boolean
+  filter_no_entry_friday: boolean
+  filter_max_0050_entry_chg: boolean
+  filter_max_0050_intra_chg: boolean
+  filter_volatility_pause: boolean
+  filter_already_holding: boolean
+  filter_single_forbidden: boolean
+  filter_max_entry_price: boolean
+  allowed: boolean
+  entered: boolean
+  block_reason: string
+}
+
+export interface SignalDayHighExitRow {
+  symbol: string
+  name: string
+  group_name: string
+  status: 'open' | 'closed'
+  entry_price: number
+  current_price: number
+  pnl_pct: number
+  entry_time: string
+  exit_time: string
+  stop_basis: string
+  stop_anchor: number
+  stop_price: number
+  time_exit_deadline: string
+  take_profit_enabled: boolean
+  bailout_enabled: boolean
+  hold_overnight_on_limit_up: boolean
+  currently_limit_up_locked: boolean
+  overnight_eligible_now: boolean
+  final_leave_cause: string
+}
+
+export interface SignalDayHighLogicFunnel {
+  selected: number
+  armed: number
+  blocked: number
+  entered: number
+  holding: number
+  exited: number
+  block_reasons: Record<string, number>
+}
+
+export interface SignalDayHighLogicSnapshot {
+  selection_rows: SignalDayHighSelectionRow[]
+  entry_rows: SignalDayHighEntryRow[]
+  exit_rows: SignalDayHighExitRow[]
+  funnel: SignalDayHighLogicFunnel
+}
+
 export interface SignalDayHighMonitorSnapshot {
   rows: SignalDayHighMonitorEntry[]
   preparing: PreparingEntry[]
@@ -176,6 +266,7 @@ export interface SignalDayHighMonitorSnapshot {
   pullback: number
   triggered: number
   entries: number
+  logic: SignalDayHighLogicSnapshot
 }
 
 export interface DashboardSnapshot {

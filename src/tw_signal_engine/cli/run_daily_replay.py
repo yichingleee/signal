@@ -33,7 +33,11 @@ def main() -> None:
     parser.add_argument("--log-folder", default="", help="Log folder name")
     parser.add_argument("--no-cache", action="store_true", help="Disable history caches (keep data dir read-only)")
     parser.add_argument("--no-charts", action="store_true", help="Skip chart generation (CSV only)")
-    parser.add_argument("--snapshots", action="store_true", help="Write replay dashboard snapshots for time-travel mode")
+    parser.add_argument(
+        "--snapshots",
+        action="store_true",
+        help="Write replay dashboard snapshots for time-travel mode",
+    )
     parser.add_argument("--snapshot-dir", default="./cache/replay/", help="Replay snapshot output directory")
     parser.add_argument("--cost-model", default="", help="Override cost params: 'commission=0.001425,tax=0.0015'")
     parser.add_argument(

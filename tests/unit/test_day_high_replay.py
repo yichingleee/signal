@@ -59,7 +59,7 @@ class _LogWriter:
         return None
 
 
-def test_day_high_tracks_pattern_before_group_eligibility_and_triggers_on_group_tick(
+def test_day_high_ignores_pattern_before_m1_r1_group_eligibility(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from tw_signal_engine.replay import replay_session as rs
@@ -96,6 +96,7 @@ def test_day_high_tracks_pattern_before_group_eligibility_and_triggers_on_group_
             return []
 
     entries: list[tuple[str, str]] = []
+    snapshots: list[object] = []
 
     def _execute_entry(*args, **kwargs) -> None:
         entries.append((args[5], args[4]))
@@ -133,10 +134,14 @@ def test_day_high_tracks_pattern_before_group_eligibility_and_triggers_on_group_
         history=HistoryWindow(vol_cum=[], trading_val=[], source_dates=[]),
         provider=provider,
         no_charts=True,
+        on_dashboard_snapshot=lambda snapshot: snapshots.append(snapshot),
     )
 
     assert trades == []
-    assert entries == [("SignalDayHigh", "StrongGroup")]
+    assert entries == []
+    assert snapshots
+    assert all(snapshot.signal_day_high.rows == [] for snapshot in snapshots[:4])
+    assert snapshots[-1].signal_day_high.rows[0].phase == "tracking"
 
 
 def test_day_high_snapshot_exposes_tracking_pullback_holding_phases(
@@ -253,16 +258,14 @@ def test_day_high_group_limit_up_count_blocks_entry_before_should_enter(
 
         def on_tick(self, idx, symbol, price, qty, match_time_us, match_time_str, is_limit_up_locked) -> bool:
             self._ticks += 1
-            if self._ticks >= 3:
-                self.last_match_info[symbol] = MatchInfo(
-                    group_name="G1",
-                    group_rank=1,
-                    member_rank=1,
-                    raw_member_rank=1,
-                    m1_symbol=symbol,
-                )
-                return True
-            return False
+            self.last_match_info[symbol] = MatchInfo(
+                group_name="G1",
+                group_rank=1,
+                member_rank=1,
+                raw_member_rank=1,
+                m1_symbol=symbol,
+            )
+            return True
 
         def is_single_allowed(self, symbol: str, max_rank: int) -> bool:
             return True

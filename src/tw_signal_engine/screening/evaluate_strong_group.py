@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from tw_signal_engine.config.strategy_config import StrongGroupConfig, TradeMode
 from tw_signal_engine.market_data.market_data_records import LinearVolumeTracker
 from tw_signal_engine.records.reference_records import ReferenceSymbol
-from tw_signal_engine.server.dashboard_snapshot import GroupSnapshot, MemberSnapshot
+from tw_signal_engine.server.dashboard_snapshot import GroupSnapshot, MemberSnapshot, SignalDayHighSelectionRow
 from tw_signal_engine.state.group_state import GroupRank
 from tw_signal_engine.state.symbol_state import IndexData
 
@@ -401,6 +401,122 @@ class StrongGroupEvaluator:
             if limit_up > 0 and self.price_last[sym] >= limit_up:
                 count += 1
         return count
+
+    def explain_day_high_selection(
+        self,
+        symbol: str,
+        idx: IndexData | None,
+        price_raw: int,
+    ) -> SignalDayHighSelectionRow:
+        """Build DayHigh selection explanation for one symbol from live ranking state."""
+        ref = self.f1_map.get(symbol)
+        name = ref.name if ref else symbol
+        is_disposition = ref is not None and ref.security == "RR"
+        is_prev_day_limit_up = self.prev_day_limit_up.get(symbol, False)
+
+        groups = self.symbol_to_groups.get(symbol, [])
+        group_name = ""
+        group_rank = -1
+        member_rank = -1
+        raw_member_rank = -1
+        m1_symbol = ""
+        vol_ratio = 0.0
+        month_trading_val = self.trading_value_month_avg.get(symbol, 0)
+
+        match_info = self.last_match_info.get(symbol)
+        if match_info is not None and match_info.group_name:
+            group_name = match_info.group_name
+            group_rank = match_info.group_rank
+            member_rank = match_info.member_rank
+            raw_member_rank = match_info.raw_member_rank
+            m1_symbol = match_info.m1_symbol
+            vol_ratio = match_info.vol_ratio
+            month_trading_val = match_info.month_trading_val
+        elif groups:
+            group_name = groups[0]
+
+        if group_name:
+            if group_rank < 0:
+                group_rank = self.group_rank.get_rank(group_name)
+            rank_map = self.group_member_vwap_rank.get(group_name)
+            if member_rank < 0 and rank_map is not None:
+                member_rank = rank_map.get_rank(symbol)
+            if not m1_symbol and rank_map is not None:
+                ranked = rank_map.iter_ranked()
+                m1_symbol = ranked[0][1] if ranked else ""
+            raw_rank_map = self.group_member_raw_vwap_rank.get(group_name)
+            if raw_member_rank < 0 and raw_rank_map is not None:
+                raw_member_rank = raw_rank_map.get_rank(symbol)
+
+        vwap_raw = int(idx.vwap) if idx is not None else 0
+        vwap_pct = self._percentage_chg(symbol, vwap_raw) if vwap_raw > 0 else 0.0
+
+        pass_group_rank = group_rank > 0 and group_rank <= self.config.group_valid_top_n
+        pass_member_rank = member_rank == 1
+        pass_raw_rank = (not self.config.require_raw_m1) or raw_member_rank == 1
+        pass_disposition_block = not (self.config.block_disposition_entry and is_disposition)
+        pass_prev_day_limit_up = not (self.config.filter_prev_day_limit_up and is_prev_day_limit_up)
+
+        pass_vwap_band = False
+        if self._is_short:
+            pass_vwap_band = vwap_pct <= -self.config.entry_min_vwap_pct_chg
+            if self.config.entry_max_vwap_pct_chg > 0:
+                pass_vwap_band = pass_vwap_band and vwap_pct >= -self.config.entry_max_vwap_pct_chg
+        else:
+            pass_vwap_band = vwap_pct >= self.config.entry_min_vwap_pct_chg
+            if self.config.entry_max_vwap_pct_chg > 0:
+                pass_vwap_band = pass_vwap_band and vwap_pct <= self.config.entry_max_vwap_pct_chg
+
+        selected = (
+            bool(group_name)
+            and pass_group_rank
+            and pass_member_rank
+            and pass_raw_rank
+            and pass_vwap_band
+            and pass_disposition_block
+            and pass_prev_day_limit_up
+        )
+
+        rejection_reason = ""
+        if not group_name:
+            rejection_reason = "no_group"
+        elif not pass_group_rank:
+            rejection_reason = "group_rank"
+        elif not pass_member_rank:
+            rejection_reason = "member_rank"
+        elif not pass_raw_rank:
+            rejection_reason = "raw_member_rank"
+        elif not pass_vwap_band:
+            rejection_reason = "vwap_band"
+        elif not pass_disposition_block:
+            rejection_reason = "disposition_block"
+        elif not pass_prev_day_limit_up:
+            rejection_reason = "prev_day_limit_up"
+
+        return SignalDayHighSelectionRow(
+            symbol=symbol,
+            name=name,
+            group_name=group_name,
+            selected=selected,
+            rejection_reason=rejection_reason,
+            group_rank=group_rank if group_rank > 0 else 0,
+            member_rank=member_rank if member_rank > 0 else 0,
+            raw_member_rank=raw_member_rank if raw_member_rank > 0 else 0,
+            m1_symbol=m1_symbol,
+            current_price=price_raw / 10000 if price_raw > 0 else 0.0,
+            vwap=vwap_raw / 10000 if vwap_raw > 0 else 0.0,
+            vwap_pct_chg=vwap_pct,
+            month_trading_val=month_trading_val,
+            vol_ratio=vol_ratio,
+            is_disposition=is_disposition,
+            is_prev_day_limit_up=is_prev_day_limit_up,
+            pass_group_rank=pass_group_rank,
+            pass_member_rank=pass_member_rank,
+            pass_raw_rank=pass_raw_rank,
+            pass_vwap_band=pass_vwap_band,
+            pass_disposition_block=pass_disposition_block,
+            pass_prev_day_limit_up=pass_prev_day_limit_up,
+        )
 
     def to_snapshot(self, idx_map: dict[str, IndexData]) -> list[GroupSnapshot]:
         """Serialize current group rankings and members to dashboard format."""
