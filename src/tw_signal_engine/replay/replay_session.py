@@ -46,6 +46,7 @@ from tw_signal_engine.reporting.build_category_summary import write_category_rep
 from tw_signal_engine.reporting.build_daily_summary import write_summary_report
 from tw_signal_engine.reporting.build_trade_report_rows import write_trade_report
 from tw_signal_engine.reporting.funnel_tracker import FunnelTracker
+from tw_signal_engine.reporting.snapshot_writer import SignalSnapshotWriter, SnapshotWriter
 from tw_signal_engine.reporting.write_order_log_csv import OrderLogWriter
 from tw_signal_engine.screening.evaluate_strong_group import StrongGroupEvaluator
 from tw_signal_engine.screening.evaluate_strong_single import StrongSingleEvaluator
@@ -193,6 +194,7 @@ def _finalize_open_positions(
     last_match_time_str: int,
     trade_date: str = "",
     hooks: SessionHooks | None = None,
+    signal_snapshot_writer: SignalSnapshotWriter | None = None,
 ) -> None:
     dummy_tick = MarketTick()
     dummy_tick.match_time_str = last_match_time_str
@@ -222,6 +224,8 @@ def _finalize_open_positions(
             )
             if hooks is not None and hooks.on_exit is not None and completed_trades:
                 hooks.on_exit(symbol, cause, completed_trades[-1])
+            if signal_snapshot_writer is not None and completed_trades:
+                signal_snapshot_writer.on_exit(symbol, cause, completed_trades[-1])
 
 
 def _merge_history_windows(otc: HistoryWindow, tse: HistoryWindow) -> HistoryWindow:
@@ -898,6 +902,8 @@ def run_daily_replay(
     history: HistoryWindow | None = None,
     use_cache: bool = True,
     no_charts: bool = False,
+    write_snapshots: bool = False,
+    snapshot_dir: str = "./cache/replay/",
     cost_model_override: str = "",
     provider: MarketDataProvider | None = None,
     hooks: SessionHooks | None = None,
@@ -1162,6 +1168,9 @@ def run_daily_replay(
         log_writer = OrderLogWriter(log_dir, trade_date)
     else:
         log_writer = _NullOrderLogWriter()
+    snapshot_writer = SnapshotWriter(trade_date, snapshot_dir) if write_snapshots else None
+    signal_snapshot_writer = SignalSnapshotWriter(trade_date, snapshot_dir) if write_snapshots else None
+    snapshots_finalized = False
 
     entry_idx = 0
 
@@ -1194,35 +1203,61 @@ def run_daily_replay(
                 num_tracker=num_tracker,
             )
 
-    def _emit_minute_callbacks(match_time_str: int) -> None:
+    def _emit_replay_snapshot(match_time_str: int) -> None:
+        if on_dashboard_snapshot is None and snapshot_writer is None:
+            return
+
+        snapshot = _build_dashboard_snapshot(
+            match_time_str=match_time_str,
+            tick_count=tick_count,
+            strong_group=strong_group,
+            strong_single=strong_single,
+            symbol_to_groups=symbol_to_groups,
+            f1_map=f1_map,
+            latest_idx_map=latest_idx_map,
+            last_price=last_price,
+            signal_a_map=signal_a_map,
+            signal_a_short_map=signal_a_short_map,
+            signal_b_map=signal_b_map,
+            signal_day_high_map=signal_day_high_map,
+            pos=pos,
+            completed_trades=completed_trades,
+            trade_mode=config.strategy.trade_mode,
+        )
+        if on_dashboard_snapshot is not None:
+            on_dashboard_snapshot(snapshot)
+        if snapshot_writer is not None:
+            snapshot_writer.capture(
+                match_time_str=match_time_str,
+                strong_group=strong_group,
+                signal_a_map=signal_a_map,
+                signal_b_map=signal_b_map,
+                pos=pos,
+                market_gate=market_gate,
+                completed_trades=completed_trades,
+                dashboard_snapshot=snapshot.to_dict(),
+            )
+
+    def _finalize_snapshot_artifacts() -> None:
+        nonlocal snapshots_finalized
+        if snapshots_finalized:
+            return
+        if snapshot_writer is not None:
+            snapshot_writer.finalize()
+        if signal_snapshot_writer is not None:
+            signal_snapshot_writer.finalize()
+        snapshots_finalized = True
+
+    def _emit_minute_callbacks(match_time_str: int, *, force: bool = False) -> None:
         nonlocal last_minute
         minute = _minute_bucket(match_time_str)
-        if minute == last_minute:
+        if not force and minute == last_minute:
             return
         last_minute = minute
 
         if hooks is not None and hooks.on_minute is not None:
             hooks.on_minute(match_time_str)
-
-        if on_dashboard_snapshot is not None:
-            snapshot = _build_dashboard_snapshot(
-                match_time_str=match_time_str,
-                tick_count=tick_count,
-                strong_group=strong_group,
-                strong_single=strong_single,
-                symbol_to_groups=symbol_to_groups,
-                f1_map=f1_map,
-                latest_idx_map=latest_idx_map,
-                last_price=last_price,
-                signal_a_map=signal_a_map,
-                signal_a_short_map=signal_a_short_map,
-                signal_b_map=signal_b_map,
-                signal_day_high_map=signal_day_high_map,
-                pos=pos,
-                completed_trades=completed_trades,
-                trade_mode=config.strategy.trade_mode,
-            )
-            on_dashboard_snapshot(snapshot)
+        _emit_replay_snapshot(match_time_str)
 
     def _has_pending_overnight_exit() -> bool:
         if not overnight_holdings:
@@ -1242,7 +1277,9 @@ def run_daily_replay(
             max(last_match_time_str, config.execution.exit_time_limit),
             trade_date=trade_date,
             hooks=hooks,
+            signal_snapshot_writer=signal_snapshot_writer,
         )
+        _emit_minute_callbacks(max(last_match_time_str, config.execution.exit_time_limit), force=True)
         if write_outputs:
             if not _has_pending_overnight_exit():
                 _generate_reports(
@@ -1277,12 +1314,14 @@ def run_daily_replay(
 
     if market_gate.market_disabled:
         if _finalize_for_market_disable():
+            _finalize_snapshot_artifacts()
             return completed_trades
 
 
     for tick in data_provider.iterate_ticks():
         if proxy_0050_next is not None and _drain_0050_proxy(tick.match_time_str):
             if _finalize_for_market_disable():
+                _finalize_snapshot_artifacts()
                 return completed_trades
 
         tick_count += 1
@@ -1294,6 +1333,7 @@ def run_daily_replay(
             market_gate.on_tick(tick)
             if market_gate.market_disabled:
                 if _finalize_for_market_disable():
+                    _finalize_snapshot_artifacts()
                     return completed_trades
 
         # Skip non-trade ticks and "00XX" symbols
@@ -1359,13 +1399,17 @@ def run_daily_replay(
                     )
                     if hooks is not None and hooks.on_exit is not None and completed_trades:
                         hooks.on_exit(symbol, overnight_cause, completed_trades[-1])
+                    if signal_snapshot_writer is not None and completed_trades:
+                        signal_snapshot_writer.on_exit(symbol, overnight_cause, completed_trades[-1])
                 overnight_holdings.pop(symbol, None)
                 if market_gate_exit_pending and not _has_pending_overnight_exit():
+                    _emit_minute_callbacks(tick.match_time_str, force=True)
                     _generate_reports(
                         completed_trades, log_dir, market_gate.market_open_chg_pct,
                         funnel, trade_date, no_charts, data_dir, prev_day_lu,
                     )
                     log_writer.close()
+                    _finalize_snapshot_artifacts()
                     return completed_trades
 
         # Exit logic
@@ -1438,6 +1482,8 @@ def run_daily_replay(
                                        pos.stocks.get(symbol, 0))
                 if hooks is not None and hooks.on_exit is not None and completed_trades:
                     hooks.on_exit(symbol, cause, completed_trades[-1])
+                if signal_snapshot_writer is not None and completed_trades:
+                    signal_snapshot_writer.on_exit(symbol, cause, completed_trades[-1])
 
         if not (abs(pos.stocks.get(symbol, 0)) > 0.001 or market_gate.market_disabled):
             # Screening (skip disabled features entirely)
@@ -1701,6 +1747,10 @@ def run_daily_replay(
                         entry_trade = pos.open_trades.get(symbol)
                         if entry_trade is not None:
                             hooks.on_entry(symbol, entry_trade)
+                    if signal_snapshot_writer is not None:
+                        entry_trade = pos.open_trades.get(symbol)
+                        if entry_trade is not None:
+                            signal_snapshot_writer.on_entry(symbol, entry_trade)
 
                     # Write log
                     mi = selected_group_eval.last_match_info.get(symbol)
@@ -1739,7 +1789,9 @@ def run_daily_replay(
         max(last_match_time_str, config.execution.exit_time_limit),
         trade_date=trade_date,
         hooks=hooks,
+        signal_snapshot_writer=signal_snapshot_writer,
     )
+    _emit_minute_callbacks(max(last_match_time_str, config.execution.exit_time_limit), force=True)
 
     # 9. Generate reports
     if write_outputs:
@@ -1758,6 +1810,7 @@ def run_daily_replay(
 
     print(f"[TIMING] TOTAL: {(time.time() - t_start) * 1000:.0f} ms")
     print(f"Total ticks processed: {tick_count}")
+    _finalize_snapshot_artifacts()
 
     return completed_trades
 
