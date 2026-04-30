@@ -4,6 +4,7 @@ This document captures the stable operator-facing rules for the repository's das
 
 Related docs:
 - Dashboard design: [../design-docs/dashboard-architecture.md](../design-docs/dashboard-architecture.md)
+- Fake Redis live dashboard test: [fake-redis-live-dashboard-test.md](fake-redis-live-dashboard-test.md)
 - Runtime conventions: [runtime-conventions.md](runtime-conventions.md)
 
 ## 1. What the dashboard depends on
@@ -71,6 +72,10 @@ Expected checks:
 
 Fake Redis belongs in unit tests through `RedisLiveProvider` dependency
 injection. Production live mode must not silently fall back to fake data.
+
+For a manual live-path smoke test without the real Redis host, use a local
+Redis server and synthetic publisher as documented in
+[fake-redis-live-dashboard-test.md](fake-redis-live-dashboard-test.md).
 
 For a no-Redis live failure check, point live mode at an unreachable Redis port
 after reference data and history inputs are valid:
