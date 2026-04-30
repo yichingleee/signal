@@ -7,6 +7,7 @@ import signal
 import threading
 import time
 import traceback
+from typing import TYPE_CHECKING
 
 from tw_signal_engine.cli.default_paths import (
     data_dir_help,
@@ -16,6 +17,10 @@ from tw_signal_engine.cli.default_paths import (
     files_dir_help,
     group_file_help,
 )
+
+if TYPE_CHECKING:
+    from tw_signal_engine.market_data.providers import MarketDataProvider
+    from tw_signal_engine.server.live_state import LiveState
 
 
 def main() -> None:
@@ -69,7 +74,6 @@ def _start_live_mode(args: argparse.Namespace) -> None:
     from tw_signal_engine.config.load_legacy_ini import load_legacy_ini
     from tw_signal_engine.config.normalize_strategy_config import normalize_strategy_config
     from tw_signal_engine.market_data.load_history_window import load_history_window
-    from tw_signal_engine.market_data.providers import MarketDataProvider
     from tw_signal_engine.market_data.redis_live_provider import RedisLiveProvider
     from tw_signal_engine.reference_data.derive_prev_day_limit_up import derive_prev_day_limit_up
     from tw_signal_engine.reference_data.load_group_membership import load_group_membership
@@ -151,6 +155,7 @@ def _start_live_mode(args: argparse.Namespace) -> None:
     )
 
     configure(mode="live", live_state=live_state)
+    feed_status_stop = _start_feed_status_bridge(provider, live_state)
     live_state.mark_engine_running()
 
     startup_error: list[BaseException] = []
@@ -188,6 +193,7 @@ def _start_live_mode(args: argparse.Namespace) -> None:
     while time.time() < deadline:
         if not t.is_alive():
             if startup_error:
+                feed_status_stop.set()
                 raise RuntimeError("Live engine failed during startup") from startup_error[0]
             break
         if live_state.get_status().get("tick_count", 0) > 0:
@@ -197,11 +203,37 @@ def _start_live_mode(args: argparse.Namespace) -> None:
     # Graceful shutdown
     def on_signal(signum: int, frame: object) -> None:
         print("\nShutting down...")
+        feed_status_stop.set()
         if hasattr(provider, "stop"):
             provider.stop()
 
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
+
+
+def _start_feed_status_bridge(
+    provider: MarketDataProvider,
+    live_state: LiveState,
+    interval: float = 1.0,
+) -> threading.Event:
+    """Periodically copy live provider health into LiveState."""
+    stop_event = threading.Event()
+
+    def poll() -> None:
+        while not stop_event.is_set():
+            _copy_feed_status(provider, live_state)
+            stop_event.wait(interval)
+
+    _copy_feed_status(provider, live_state)
+    thread = threading.Thread(target=poll, daemon=True, name="feed-status")
+    thread.start()
+    return stop_event
+
+
+def _copy_feed_status(provider: MarketDataProvider, live_state: LiveState) -> None:
+    status = provider.get_status()
+    if status is not None:
+        live_state.update_feed_status(status)
 
 
 if __name__ == "__main__":

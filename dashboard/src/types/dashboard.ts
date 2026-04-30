@@ -286,16 +286,36 @@ export interface DashboardSnapshot {
   modules: DashboardModuleStatus[]
 }
 
+export interface LiveFeedStatus {
+  source: string
+  connected: boolean
+  subscribed_channels: number
+  last_message_at: string
+  last_tick_time_raw: number
+  reconnect_count: number
+  parse_error_count: number
+  ignored_message_count: number
+  dropped_tick_count: number
+  queue_depth: number
+  last_error: string
+}
+
 export interface StatusResponse {
   mode: 'live' | 'replay'
   tick_count?: number
   last_time_str?: number
+  engine_status?: string
+  feed_status?: LiveFeedStatus
   ready?: boolean
   time_range?: {
     min_time: string
     max_time: string
     count: number
   }
+}
+
+export interface DashboardStatusResponse extends StatusResponse {
+  has_snapshot?: boolean
 }
 
 export interface ReplayStatusResponse {

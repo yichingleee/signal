@@ -122,6 +122,49 @@ replay_session.py main loop         ← unchanged from batch replay
 
 7. **Graceful shutdown**: `stop()` sets a `threading.Event` and pushes `None` sentinel to unblock the queue. CLI registers `SIGINT`/`SIGTERM` handlers.
 
+**Redis message contract**:
+
+Redis Pub/Sub channels are stock symbols such as `2330`. Symbol fields in
+payloads may contain trailing spaces and are stripped before pairing and status
+lookup.
+
+Trade payloads use the replay-compatible CSV shape:
+
+```text
+Trade,<symbol>,<HHMMSSuuuuuu>,<func_code>,<price_x10000>,<tick_volume>,<total_volume>,...
+```
+
+Depth payloads are separate CSV-like rows with bid and ask sections:
+
+```text
+Depth,<symbol>,<HHMMSSuuuuuu>,BID:5,<price>,<qty>,...,ASK:5,<price>,<qty>,...
+```
+
+Only normal trade rows are emitted to the engine. `func_code != 0` rows are
+counted as ignored messages. Prices remain integer scaled by 10,000, matching
+the replay parser and engine threshold logic. A Trade row is buffered until a
+matching Depth row arrives; if a newer Trade arrives first, the older Trade is
+flushed without depth data.
+
+**Health status**:
+
+`RedisLiveProvider.get_status()` returns `LiveFeedStatus`, which is also copied
+into `LiveState` for the web API. Fields are:
+
+| Field | Meaning |
+|---|---|
+| `source` | Feed type, currently `redis` |
+| `connected` | Listener is connected and subscribed |
+| `subscribed_channels` | Current subscribed symbol count |
+| `last_message_at` | UTC timestamp of the most recent decoded Pub/Sub message |
+| `last_tick_time_raw` | Last emitted `MarketTick.match_time_str` |
+| `reconnect_count` | Redis reconnect attempts after connection loss |
+| `parse_error_count` | Malformed Trade/Depth rows or parser failures |
+| `ignored_message_count` | Non-Trade/Depth, Depth without Trade, or non-normal Trade rows |
+| `dropped_tick_count` | Reserved for bounded queues; should remain zero today |
+| `queue_depth` | Current queue backlog between listener and engine loop |
+| `last_error` | Most recent listener or parser error text |
+
 **Configuration** (`LiveConfig` in `config/strategy_config.py`):
 
 | Field | Default | Purpose |
@@ -334,6 +377,8 @@ Integers sort naturally, compare cheaply, and have no timezone ambiguity. The fo
 | `TestRedisLiveProvider::test_handle_trade_depth_pairing` | Trade + Depth lines are paired into a single `MarketTick` |
 | `TestRedisLiveProvider::test_handle_trade_without_depth` | Pending Trade is flushed when next Trade arrives (no Depth) |
 | `TestRedisLiveProvider::test_status_code_filter` | Non-normal trades (`func_code != '0'`) are filtered out |
+| `TestRedisLiveProvider::test_fake_redis_listener_decodes_bytes_and_strings` | Fake Pub/Sub drives the listener without a real Redis server |
+| `TestRedisLiveProvider::test_fake_redis_listener_reconnect_status` | Connection loss increments reconnect health and resumes on the next fake client |
 | `TestBackfillThenLiveProvider::test_file_then_live` | Composite provider switches from file to live at cutover |
 | `TestBackfillThenLiveProvider::test_dedup_overlap` | Duplicate ticks at cutover boundary are deduplicated |
 

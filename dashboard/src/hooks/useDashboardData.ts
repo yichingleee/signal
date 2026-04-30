@@ -4,6 +4,7 @@ import { getSocket, disconnectSocket } from '../api/socket'
 import type {
   DashboardSnapshot,
   DashboardModuleStatus,
+  LiveFeedStatus,
   ReplayStatusResponse,
   SignalAMonitorSnapshot,
   SignalBMonitorSnapshot,
@@ -403,6 +404,7 @@ interface DashboardData {
   snapshot: DashboardSnapshot | null
   mode: 'live' | 'replay'
   connected: boolean
+  feedStatus: LiveFeedStatus | null
   lastUpdate: string
   stale: boolean
   error: string | null
@@ -414,6 +416,7 @@ export function useDashboardData(): DashboardData {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null)
   const [mode, setMode] = useState<'live' | 'replay'>('live')
   const [connected, setConnected] = useState(true)
+  const [feedStatus, setFeedStatus] = useState<LiveFeedStatus | null>(null)
   const [lastUpdate, setLastUpdate] = useState('')
   const [stale, setStale] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -427,7 +430,8 @@ export function useDashboardData(): DashboardData {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [groupsRes, singlesRes, vwapRes, signalARes, signalBRes, signalDayHighRes, modulesRes] = await Promise.all([
+      const [statusRes, groupsRes, singlesRes, vwapRes, signalARes, signalBRes, signalDayHighRes, modulesRes] = await Promise.all([
+        api.dashboardStatus(),
         api.groups(),
         api.singles(),
         api.vwap(),
@@ -436,6 +440,8 @@ export function useDashboardData(): DashboardData {
         api.signalDayHigh(),
         api.modules(),
       ])
+      setMode(statusRes.mode)
+      setFeedStatus(statusRes.mode === 'live' ? statusRes.feed_status ?? null : null)
       const now = new Date().toLocaleTimeString('zh-TW')
       setSnapshot((prev) => ({
         timestamp: now,
@@ -490,6 +496,7 @@ export function useDashboardData(): DashboardData {
     api.status()
       .then((s) => {
         setMode(s.mode)
+        setFeedStatus(s.mode === 'live' ? s.feed_status ?? null : null)
         if (s.mode === 'replay') {
           setConnected(true)
         }
@@ -509,6 +516,7 @@ export function useDashboardData(): DashboardData {
       api.replayStatus()
         .then((status) => {
           setReplayInfo(status)
+          setFeedStatus(null)
           const start = status.time_range?.min_time ?? '09:00'
           setCurrentReplayTime(start)
           return jumpTo(start)
@@ -520,11 +528,11 @@ export function useDashboardData(): DashboardData {
     }
 
     // Live mode: socket push + polling fallback.
-      const socket = getSocket()
+    const socket = getSocket()
     setConnected(socket.connected)
     socket.on('connect', () => setConnected(true))
     socket.on('disconnect', () => setConnected(false))
-      socket.on('dashboard:snapshot', (data: DashboardSnapshot) => {
+    socket.on('dashboard:snapshot', (data: DashboardSnapshot) => {
       setSnapshot({
         ...data,
         signal_b: data.signal_b ?? { rows: [], buffer_zone: 0, trade_zone: 0, triggered: 0, forbidden: 0 },
@@ -596,5 +604,5 @@ export function useDashboardData(): DashboardData {
     }
   }, [currentReplayTime, jumpTo, mode, playing, replayInfo?.time_range?.max_time, replayInfo?.time_range?.min_time, step])
 
-  return { snapshot, mode, connected, lastUpdate, stale, error, refreshNow: fetchAll, replay }
+  return { snapshot, mode, connected, feedStatus, lastUpdate, stale, error, refreshNow: fetchAll, replay }
 }

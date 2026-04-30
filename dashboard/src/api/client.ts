@@ -7,6 +7,7 @@ import type {
   SignalDayHighMonitorSnapshot,
   DashboardModuleStatus,
   StatusResponse,
+  DashboardStatusResponse,
   ReplayStatusResponse,
 } from '../types/dashboard'
 
@@ -18,6 +19,8 @@ async function fetchJSON<T>(path: string): Promise<T> {
 
 export const api = {
   status: () => fetchJSON<StatusResponse>('/api/status'),
+
+  dashboardStatus: () => fetchJSON<DashboardStatusResponse>('/api/dashboard/status'),
 
   groups: () =>
     fetchJSON<{ groups: GroupSnapshot[] }>('/api/dashboard/groups'),

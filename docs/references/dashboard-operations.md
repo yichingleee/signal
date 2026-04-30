@@ -31,6 +31,14 @@ In live mode the browser expects both:
 
 The UI still polls every two seconds in live mode, so API regressions will show up even if the socket path is healthy.
 
+Live status is split into independent layers:
+- browser socket state: whether the browser is connected to Socket.IO
+- engine state: `engine_status`, `tick_count`, and fatal engine errors from `/api/status`
+- Redis feed state: `feed_status` from `/api/status` and `/api/dashboard/status`
+
+Redis disconnects or reconnects should appear in `feed_status` without turning
+the engine status fatal unless the engine thread actually crashes.
+
 ## 4. Replay mode expectations
 
 Replay mode depends on snapshot data, not only the original market data inputs.
@@ -41,6 +49,60 @@ Required behavior:
 - expect the slider and replay jump controls to be limited to the stored snapshot time range
 
 If replay snapshots are absent, the replay status or jump flow can initialize but the dashboard will have nothing useful to render.
+
+Replay mode is the primary no-Redis dashboard development workflow:
+
+```bash
+uv run python -m tw_signal_engine.cli.run_daily_replay \
+  --date <YYYYMMDD> \
+  --snapshots
+
+uv run python -m tw_signal_engine.cli.run_server \
+  --mode replay \
+  --date <YYYYMMDD> \
+  --snapshot-dir ./cache/replay/
+```
+
+Expected checks:
+- `/api/status` reports `mode: replay` and replay readiness.
+- `/api/dashboard/status` reports the replay time range.
+- No Redis warning is displayed in the dashboard.
+- Timeline jumps update the same route components used in live mode.
+
+Fake Redis belongs in unit tests through `RedisLiveProvider` dependency
+injection. Production live mode must not silently fall back to fake data.
+
+For a no-Redis live failure check, point live mode at an unreachable Redis port
+after reference data and history inputs are valid:
+
+```bash
+uv run python -m tw_signal_engine.cli.run_server \
+  --mode live \
+  --date <YYYYMMDD> \
+  --redis-host 127.0.0.1 \
+  --redis-port 6399
+```
+
+Expected checks:
+- the server remains reachable;
+- `/api/status.engine_status` is separate from `/api/status.feed_status`;
+- `feed_status.connected` is false and reconnect count/error diagnostics are visible;
+- the dashboard shows socket/server status separately from Redis retrying state.
+
+Real Redis smoke testing is optional and should be done only when the market
+feed is expected:
+
+```bash
+uv run python -m tw_signal_engine.cli.run_server \
+  --mode live \
+  --date <YYYYMMDD> \
+  --redis-host 192.168.100.130 \
+  --redis-port 6379
+```
+
+During market data flow, subscribed channels should be non-zero, feed message
+age should stay fresh, tick count and dashboard snapshot time should advance,
+and parse errors should remain zero or be explained by captured payloads.
 
 ## 5. Intentional unavailable modules
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 from tw_signal_engine.config.strategy_config import LiveConfig
 from tw_signal_engine.market_data.backfill_provider import BackfillThenLiveProvider
 from tw_signal_engine.market_data.file_replay_provider import FileReplayProvider
@@ -20,6 +22,46 @@ class _MockProvider(MarketDataProvider):
 
     def iterate_ticks(self):
         yield from self._ticks
+
+
+class _FakePubSub:
+    def __init__(self, messages: list[object], on_empty=None) -> None:
+        self.messages = messages
+        self.on_empty = on_empty
+        self.subscribed: tuple[str, ...] = ()
+        self.unsubscribed = False
+        self.closed = False
+
+    def subscribe(self, *channels: str) -> None:
+        self.subscribed = channels
+
+    def get_message(self, timeout: float = 1.0) -> object | None:
+        if self.messages:
+            item = self.messages.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
+        if self.on_empty is not None:
+            self.on_empty()
+        return None
+
+    def unsubscribe(self) -> None:
+        self.unsubscribed = True
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeRedisClient:
+    def __init__(self, pubsub: _FakePubSub) -> None:
+        self._pubsub = pubsub
+        self.closed = False
+
+    def pubsub(self) -> _FakePubSub:
+        return self._pubsub
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def _make_tick(symbol: str = "2330", time_str: int = 90000000000, price: int = 5000000) -> MarketTick:
@@ -103,6 +145,9 @@ class TestRedisLiveProvider:
         assert tick.match.price == 5000000
         assert tick.bid[0].price == 4999000
         assert tick.ask[0].price == 5001000
+        status = p.get_status()
+        assert status.last_tick_time_raw == 90000000000
+        assert status.queue_depth == 0
 
     def test_handle_trade_without_depth(self):
         config = LiveConfig()
@@ -125,6 +170,7 @@ class TestRedisLiveProvider:
         p = RedisLiveProvider(config, tick_filter={"2330"})
         p._handle_line("")
         assert p._queue.qsize() == 0
+        assert p.get_status().ignored_message_count == 0
 
     def test_empty_tick_filter_terminates(self):
         """iterate_ticks() must terminate when tick_filter is empty (no infinite loop)."""
@@ -143,6 +189,98 @@ class TestRedisLiveProvider:
         p._handle_line(trade)
         p._handle_line(depth)
         assert p._queue.qsize() == 0  # filtered out
+        assert p.get_status().ignored_message_count == 1
+
+    def test_unknown_message_type_increments_ignored_count(self):
+        config = LiveConfig()
+        p = RedisLiveProvider(config, tick_filter={"2330"})
+
+        p._handle_line("Quote,2330,90000000000")
+
+        assert p._queue.qsize() == 0
+        assert p.get_status().ignored_message_count == 1
+
+    def test_malformed_trade_increments_parse_error_count(self):
+        config = LiveConfig()
+        p = RedisLiveProvider(config, tick_filter={"2330"})
+
+        p._handle_line("Trade,2330")
+
+        status = p.get_status()
+        assert p._queue.qsize() == 0
+        assert status.parse_error_count == 1
+        assert "malformed Trade" in status.last_error
+
+    def test_fake_redis_listener_decodes_bytes_and_strings(self):
+        config = LiveConfig(reconnect_delay=0)
+        provider_ref: dict[str, RedisLiveProvider] = {}
+        pubsub = _FakePubSub(
+            [
+                {"type": "subscribe", "data": b""},
+                {"type": "message", "data": b"Trade,2330  ,90000000000,0,5000000,100,1000,1"},
+                {"type": "message", "data": "Depth,2330  ,90000000000,BID:5,4999000,100,ASK:5,5001000,200"},
+            ],
+            on_empty=lambda: provider_ref["provider"].stop(),
+        )
+        client = _FakeRedisClient(pubsub)
+        provider = RedisLiveProvider(
+            config,
+            tick_filter={"2330"},
+            redis_client_factory=lambda: client,
+        )
+        provider_ref["provider"] = provider
+
+        thread = threading.Thread(target=provider._listen)
+        thread.start()
+        thread.join(timeout=1.0)
+
+        assert not thread.is_alive()
+        assert pubsub.subscribed == ("2330",)
+        assert pubsub.unsubscribed is True
+        assert pubsub.closed is True
+        assert client.closed is True
+        tick = provider._queue.get_nowait()
+        assert tick is not None
+        assert tick.symbol == "2330"
+        status = provider.get_status()
+        assert status.connected is False
+        assert status.subscribed_channels == 0
+        assert status.last_message_at != ""
+        assert status.last_tick_time_raw == 90000000000
+
+    def test_fake_redis_listener_reconnect_status(self):
+        config = LiveConfig(reconnect_delay=0)
+        provider_ref: dict[str, RedisLiveProvider] = {}
+        first_pubsub = _FakePubSub([OSError("connection lost")])
+        second_pubsub = _FakePubSub(
+            [
+                {"type": "message", "data": "Trade,2330,90000000000,0,5000000,100"},
+                {"type": "message", "data": "Depth,2330,90000000000,BID:1,4999000,100,ASK:1,5001000,200"},
+            ],
+            on_empty=lambda: provider_ref["provider"].stop(),
+        )
+        clients = [_FakeRedisClient(first_pubsub), _FakeRedisClient(second_pubsub)]
+
+        provider = RedisLiveProvider(
+            config,
+            tick_filter={"2330"},
+            redis_client_factory=lambda: clients.pop(0),
+        )
+        provider_ref["provider"] = provider
+
+        thread = threading.Thread(target=provider._listen)
+        thread.start()
+        thread.join(timeout=1.0)
+
+        assert not thread.is_alive()
+        status = provider.get_status()
+        assert status.reconnect_count == 1
+        assert status.last_error == "connection lost"
+        tick = provider._queue.get_nowait()
+        assert tick is not None
+        assert tick.symbol == "2330"
+        assert first_pubsub.closed is True
+        assert second_pubsub.closed is True
 
 
 class TestBackfillThenLiveProvider:

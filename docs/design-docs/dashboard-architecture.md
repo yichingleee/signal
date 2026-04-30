@@ -51,6 +51,11 @@ The UI consumes these endpoints:
 
 In live mode the server emits `dashboard:snapshot` over Socket.IO. The push loop deduplicates on snapshot identity before sending so the browser does not re-render identical data continuously between minute-boundary snapshot updates.
 
+`/api/status` and `/api/dashboard/status` include `feed_status` in live mode.
+This status is copied from the live provider into `LiveState`; FastAPI does not
+read the Redis provider directly. Replay mode omits `feed_status` so the UI does
+not report a Redis outage during replay-dashboard workflows.
+
 ### 3.3 Static serving
 
 If `dashboard/dist/` exists, FastAPI mounts it at `/` after registering API routes. This is why a missing frontend build produces a working API server with no dashboard UI.
@@ -146,7 +151,18 @@ Live mode behavior:
 - open a Socket.IO connection
 - listen for `dashboard:snapshot`
 - fall back to REST polling every two seconds
+- poll `/api/dashboard/status` with the fallback path for Redis feed health
 - mark the UI stale if no fresh data is received for a while
+
+The status bar renders browser socket state separately from Redis feed state:
+- socket disconnected means the browser has lost Socket.IO and is relying on
+  REST polling;
+- Redis disconnected/retrying means the server is up but the live feed provider
+  is reconnecting;
+- Redis connected/stale means the provider is subscribed but has not decoded a
+  recent feed message;
+- queue backlog and parse/ignored counts are feed diagnostics, not strategy
+  errors by themselves.
 
 Replay mode behavior:
 - disconnect the socket

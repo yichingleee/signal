@@ -9,6 +9,7 @@
 - [docs/exec-plans/completed/parquet-text-ground-truth-parity-filter.md](parquet-text-ground-truth-parity-filter.md): obsolete text-ground-truth parity plan retained for source-difference context
 - [docs/exec-plans/completed/python-rewrite-reorganization.md](python-rewrite-reorganization.md)
 - [docs/exec-plans/completed/redis-live-smoke-remediation-plan.md](redis-live-smoke-remediation-plan.md): completed Redis live smoke-test remediation
+- [docs/exec-plans/completed/redis-live-dashboard-integration-plan.md](redis-live-dashboard-integration-plan.md): Redis feed diagnostics, status APIs, dashboard health display, and no-Redis workflow documentation
 - [docs/exec-plans/completed/replay-runtime-optimization-execution-plan.md](replay-runtime-optimization-execution-plan.md)
 - [docs/exec-plans/completed/dayhigh-breakout-strategy-execution-plan.md](dayhigh-breakout-strategy-execution-plan.md)
 - [docs/exec-plans/completed/enhanced-replay-report-audit.md](enhanced-replay-report-audit.md)

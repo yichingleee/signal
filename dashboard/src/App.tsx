@@ -9,12 +9,19 @@ import { DayHighMonitor } from './pages/DayHighMonitor'
 import { useDashboardData } from './hooks/useDashboardData'
 
 export function App() {
-  const { snapshot, mode, connected, lastUpdate, stale, error, replay } = useDashboardData()
+  const { snapshot, mode, connected, feedStatus, lastUpdate, stale, error, replay } = useDashboardData()
 
   return (
     <BrowserRouter>
       <Header mode={mode} connected={connected} lastUpdate={lastUpdate} />
-      <StatusBar mode={mode} connected={connected} stale={stale} lastUpdate={lastUpdate} error={error} />
+      <StatusBar
+        mode={mode}
+        connected={connected}
+        feedStatus={feedStatus}
+        stale={stale}
+        lastUpdate={lastUpdate}
+        error={error}
+      />
         <Routes>
         <Route
           path="/"
