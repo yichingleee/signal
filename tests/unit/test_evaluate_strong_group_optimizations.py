@@ -266,3 +266,65 @@ def test_day_high_selection_explanation_rejects_entry_max_vol_ratio_like_replay(
     assert row.pass_entry_max_vol_ratio is False
     assert row.selected is False
     assert row.rejection_reason == "entry_max_vol_ratio"
+
+
+def _make_evaluator_for_guc(prices: dict[str, int]) -> StrongGroupEvaluator:
+    """Build a 4-member group with explicit last-prices for the GUC test."""
+    members = {"AAA", "BBB", "CCC", "DDD"}
+    ev = _make_evaluator(
+        symbol_to_groups={s: ["G1"] for s in members},
+        group_members={"G1": set(members)},
+        trading_val={s: 1_000_000 for s in members},
+    )
+    for sym, price in prices.items():
+        ev.price_last[sym] = price
+    return ev
+
+
+def test_count_group_up_members_excludes_current_symbol_from_both_counts() -> None:
+    """The entering candidate is excluded from up_count and total_members."""
+    # AAA is the entering candidate; even at +5% (above 3% threshold) it should
+    # not count toward up_count, and should not inflate total_members.
+    ev = _make_evaluator_for_guc(
+        {"AAA": 1_050_000, "BBB": 1_040_000, "CCC": 1_020_000, "DDD": 1_010_000}
+    )
+
+    up_count, total = ev.count_group_up_members("G1", current_symbol="AAA", threshold=0.03)
+
+    # Only BBB is > +3%; CCC (+2%) and DDD (+1%) are not. AAA excluded entirely.
+    assert up_count == 1
+    assert total == 3
+
+
+def test_count_group_up_members_uses_strict_greater_than_threshold() -> None:
+    """A member at exactly the threshold must NOT count as up — strict ``>``.
+
+    Uses ``threshold=0.0`` against a member whose price equals ``prev_close``
+    so the ratio is *exactly* ``0.0`` with no FP artefact: ``0.0 > 0.0 == False``.
+    """
+    ev = _make_evaluator_for_guc(
+        {"AAA": 1_000_000, "BBB": 1_000_000, "CCC": 1_000_001, "DDD": 999_999}
+    )
+
+    up_count, total = ev.count_group_up_members("G1", current_symbol="AAA", threshold=0.0)
+
+    # BBB exactly at threshold → excluded by strict >; CCC just over → counted;
+    # DDD just under → not counted but still counts toward total_members.
+    assert up_count == 1
+    assert total == 3
+
+
+def test_count_group_up_members_skips_members_with_zero_price_or_no_prev_close() -> None:
+    """Members lacking a usable last-price or prev_close drop out of total_members."""
+    ev = _make_evaluator_for_guc(
+        {"AAA": 1_000_000, "BBB": 1_040_000, "CCC": 0, "DDD": 1_050_000}
+    )
+    # Strip DDD's prev_close to simulate a member with no reference.
+    ev._prev_close_cache["DDD"] = 0
+
+    up_count, total = ev.count_group_up_members("G1", current_symbol="AAA", threshold=0.03)
+
+    # AAA excluded (current). CCC (price=0) and DDD (prev_close<=0) drop out.
+    # Only BBB remains and it is up.
+    assert up_count == 1
+    assert total == 1
