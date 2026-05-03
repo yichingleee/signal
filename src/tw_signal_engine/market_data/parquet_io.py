@@ -24,7 +24,17 @@ PARQUET_REPLAY_COLUMNS: list[str] = [
     "tradePrice",
     "tradeVolume",
     "buyPrice1",
+    "buyVolume1",
+    "buyVolume2",
+    "buyVolume3",
+    "buyVolume4",
+    "buyVolume5",
     "sellPrice1",
+    "sellVolume1",
+    "sellVolume2",
+    "sellVolume3",
+    "sellVolume4",
+    "sellVolume5",
 ]
 
 PARQUET_HISTORY_COLUMNS: list[str] = [
@@ -58,7 +68,17 @@ _REPLAY_SCHEMA: dict[str, pa.DataType] = {
     "tradePrice": pa.float64(),
     "tradeVolume": pa.int32(),
     "buyPrice1": pa.float64(),
+    "buyVolume1": pa.int32(),
+    "buyVolume2": pa.int32(),
+    "buyVolume3": pa.int32(),
+    "buyVolume4": pa.int32(),
+    "buyVolume5": pa.int32(),
     "sellPrice1": pa.float64(),
+    "sellVolume1": pa.int32(),
+    "sellVolume2": pa.int32(),
+    "sellVolume3": pa.int32(),
+    "sellVolume4": pa.int32(),
+    "sellVolume5": pa.int32(),
 }
 
 _HISTORY_SCHEMA: dict[str, pa.DataType] = {

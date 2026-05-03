@@ -105,15 +105,39 @@ class ParquetReplayProvider(MarketDataProvider):
             volumes = batch.column("tradeVolume").to_pylist()
             bids = batch.column("buyPrice1").to_pylist()
             asks = batch.column("sellPrice1").to_pylist()
+            bid_qtys_l1 = batch.column("buyVolume1").to_pylist()
+            bid_qtys_l2 = batch.column("buyVolume2").to_pylist()
+            bid_qtys_l3 = batch.column("buyVolume3").to_pylist()
+            bid_qtys_l4 = batch.column("buyVolume4").to_pylist()
+            bid_qtys_l5 = batch.column("buyVolume5").to_pylist()
+            ask_qtys_l1 = batch.column("sellVolume1").to_pylist()
+            ask_qtys_l2 = batch.column("sellVolume2").to_pylist()
+            ask_qtys_l3 = batch.column("sellVolume3").to_pylist()
+            ask_qtys_l4 = batch.column("sellVolume4").to_pylist()
+            ask_qtys_l5 = batch.column("sellVolume5").to_pylist()
             markets = batch.column("market").to_pylist()
 
-            for sym, raw_time, price, qty, bid_price, ask_price, market in zip(
-                symbols, times, prices, volumes, bids, asks, markets
+            for (
+                sym, raw_time, price, qty, bid_price, ask_price,
+                bq1, bq2, bq3, bq4, bq5,
+                aq1, aq2, aq3, aq4, aq5,
+                market,
+            ) in zip(
+                symbols, times, prices, volumes, bids, asks,
+                bid_qtys_l1, bid_qtys_l2, bid_qtys_l3, bid_qtys_l4, bid_qtys_l5,
+                ask_qtys_l1, ask_qtys_l2, ask_qtys_l3, ask_qtys_l4, ask_qtys_l5,
+                markets,
             ):
                 price_int = to_int_price(price)
                 bid_int = to_int_price(bid_price) if bid_price is not None else 0
                 ask_int = to_int_price(ask_price) if ask_price is not None else 0
                 ts_us = _convert_raw_time_to_us(raw_time)
+                total_bid_qty = (
+                    (bq1 or 0) + (bq2 or 0) + (bq3 or 0) + (bq4 or 0) + (bq5 or 0)
+                )
+                total_ask_qty = (
+                    (aq1 or 0) + (aq2 or 0) + (aq3 or 0) + (aq4 or 0) + (aq5 or 0)
+                )
 
                 tick = MarketTick(
                     symbol=sym,
@@ -126,6 +150,8 @@ class ParquetReplayProvider(MarketDataProvider):
                 )
                 tick.bid[0].price = bid_int
                 tick.ask[0].price = ask_int
+                tick.total_bid_qty = total_bid_qty
+                tick.total_ask_qty = total_ask_qty
                 if bid_int and price_int == bid_int:
                     tick.trade_at = 1
                 elif ask_int:

@@ -38,7 +38,17 @@ def _write_replay_parquet(path: Path, rows: list[dict[str, object]]) -> None:
         "tradePrice": pa.array([r["tradePrice"] for r in rows], type=pa.float64()),
         "tradeVolume": pa.array([r["tradeVolume"] for r in rows], type=pa.int32()),
         "buyPrice1": pa.array([r["buyPrice1"] for r in rows], type=pa.float64()),
+        "buyVolume1": pa.array([r.get("buyVolume1", 0) for r in rows], type=pa.int32()),
+        "buyVolume2": pa.array([r.get("buyVolume2", 0) for r in rows], type=pa.int32()),
+        "buyVolume3": pa.array([r.get("buyVolume3", 0) for r in rows], type=pa.int32()),
+        "buyVolume4": pa.array([r.get("buyVolume4", 0) for r in rows], type=pa.int32()),
+        "buyVolume5": pa.array([r.get("buyVolume5", 0) for r in rows], type=pa.int32()),
         "sellPrice1": pa.array([r["sellPrice1"] for r in rows], type=pa.float64()),
+        "sellVolume1": pa.array([r.get("sellVolume1", 0) for r in rows], type=pa.int32()),
+        "sellVolume2": pa.array([r.get("sellVolume2", 0) for r in rows], type=pa.int32()),
+        "sellVolume3": pa.array([r.get("sellVolume3", 0) for r in rows], type=pa.int32()),
+        "sellVolume4": pa.array([r.get("sellVolume4", 0) for r in rows], type=pa.int32()),
+        "sellVolume5": pa.array([r.get("sellVolume5", 0) for r in rows], type=pa.int32()),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(pa.table(arrays), str(path))
@@ -321,6 +331,53 @@ def test_provider_is_deterministic_for_same_parquet_inputs(tmp_path: Path) -> No
     second = [(t.symbol, t.match_time_str, t.match.price, t.match.qty) for t in provider.iterate_ticks()]
 
     assert first == second
+
+
+def test_total_bid_ask_qty_aggregated_from_five_levels(tmp_path: Path) -> None:
+    """Provider must surface depth volume so the limit-up-lock check can fire.
+
+    Real parquet feed represents limit-up state with ``buyPrice1=0`` while the
+    five buy-volume levels still carry the queued size. Without aggregating
+    the level volumes into ``total_bid_qty`` the engine's
+    ``has_bid_queue`` fallback never trips and overnight carries are missed.
+    """
+    _write_replay_parquet(
+        tmp_path / "TWSE" / "20260326.parquet",
+        [
+            {
+                "symbol": "1101",
+                "time": 132000000000,
+                "tradePrice": 76.4,
+                "tradeVolume": 1,
+                "buyPrice1": 0.0,  # limit-up sentinel — best bid encoded at L2
+                "buyVolume1": 5391,
+                "buyVolume2": 2218,
+                "buyVolume3": 6,
+                "buyVolume4": 1,
+                "buyVolume5": 19,
+                "sellPrice1": 0.0,
+                "sellVolume1": 0,
+                "sellVolume2": 0,
+                "sellVolume3": 0,
+                "sellVolume4": 0,
+                "sellVolume5": 0,
+            },
+        ],
+    )
+    _write_replay_parquet(tmp_path / "TPEX" / "20260326.parquet", [])
+
+    provider = ParquetReplayProvider(
+        otc_date="20260326",
+        tse_date="20260326",
+        root=tmp_path,
+    )
+    ticks = list(provider.iterate_ticks())
+    assert len(ticks) == 1
+    tick = ticks[0]
+    assert tick.bid[0].price == 0
+    assert tick.ask[0].price == 0
+    assert tick.total_bid_qty == 5391 + 2218 + 6 + 1 + 19
+    assert tick.total_ask_qty == 0
 
 
 # ---------------------------------------------------------------------------

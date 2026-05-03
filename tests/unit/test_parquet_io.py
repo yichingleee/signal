@@ -93,7 +93,17 @@ def _replay_table(**overrides: pa.Array) -> pa.Table:
         "tradePrice": pa.array([588.0], type=pa.float64()),
         "tradeVolume": pa.array([100], type=pa.int32()),
         "buyPrice1": pa.array([587.0], type=pa.float64()),
+        "buyVolume1": pa.array([10], type=pa.int32()),
+        "buyVolume2": pa.array([20], type=pa.int32()),
+        "buyVolume3": pa.array([0], type=pa.int32()),
+        "buyVolume4": pa.array([0], type=pa.int32()),
+        "buyVolume5": pa.array([0], type=pa.int32()),
         "sellPrice1": pa.array([589.0], type=pa.float64()),
+        "sellVolume1": pa.array([15], type=pa.int32()),
+        "sellVolume2": pa.array([0], type=pa.int32()),
+        "sellVolume3": pa.array([0], type=pa.int32()),
+        "sellVolume4": pa.array([0], type=pa.int32()),
+        "sellVolume5": pa.array([0], type=pa.int32()),
     }
     arrays.update(overrides)
     return pa.table(arrays)
@@ -175,7 +185,8 @@ def test_parquet_path_rejects_unknown_market() -> None:
 
 
 def test_canonical_column_lists_are_complete() -> None:
-    # Replay covers everything the engine needs to construct a MarketTick.
+    # Replay covers everything the engine needs to construct a MarketTick,
+    # including the five-level depth volumes that surface limit-up-locked state.
     expected_replay = {
         "symbol",
         "time",
@@ -183,7 +194,17 @@ def test_canonical_column_lists_are_complete() -> None:
         "tradePrice",
         "tradeVolume",
         "buyPrice1",
+        "buyVolume1",
+        "buyVolume2",
+        "buyVolume3",
+        "buyVolume4",
+        "buyVolume5",
         "sellPrice1",
+        "sellVolume1",
+        "sellVolume2",
+        "sellVolume3",
+        "sellVolume4",
+        "sellVolume5",
     }
     assert set(PARQUET_REPLAY_COLUMNS) == expected_replay
     # History needs the lighter projection (no quote levels).
