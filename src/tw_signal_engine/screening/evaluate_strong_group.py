@@ -410,6 +410,37 @@ class StrongGroupEvaluator:
                 count += 1
         return count
 
+    def count_group_up_members(
+        self,
+        group: str,
+        *,
+        current_symbol: str,
+        threshold: float,
+    ) -> tuple[int, int]:
+        """Count valid peer members whose latest price is strictly above threshold."""
+        up_count = 0
+        total_members = 0
+        for sym in self.group_members.get(group, set()):
+            if sym == current_symbol:
+                continue
+            price_raw = self.price_last.get(sym, 0)
+            if price_raw <= 0:
+                continue
+            prev_close = self._prev_close_cache.get(sym)
+            if prev_close is None:
+                ref = self.f1_map.get(sym)
+                if ref is None:
+                    continue
+                prev_close = ref.previous_close * 10000
+                self._prev_close_cache[sym] = prev_close
+            if prev_close <= 0:
+                continue
+
+            total_members += 1
+            if (price_raw - prev_close) / prev_close > threshold:
+                up_count += 1
+        return up_count, total_members
+
     def explain_day_high_selection(
         self,
         symbol: str,
