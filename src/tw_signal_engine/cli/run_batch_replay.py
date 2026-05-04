@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 from datetime import datetime
 from pathlib import Path
 
@@ -12,10 +11,11 @@ from tw_signal_engine.cli.default_paths import (
     default_group_file,
     files_dir_help,
     group_file_help,
+    replay_data_dir_help,
+    resolve_replay_data_dir,
 )
 
 _DEFAULT_DATA_DIR = "./data/"
-_PARQUET_DATA_DIR_ENV = "TW_SIGNAL_PARQUET_DATA_DIR"
 
 
 def _get_trading_dates(start: str, end: str, data_dir: str = _DEFAULT_DATA_DIR) -> list[str]:
@@ -75,10 +75,7 @@ def main() -> None:
     parser.add_argument(
         "--data-dir",
         default=None,
-        help=(
-            "Data directory. Default: text=./data/; "
-            "parquet=$TW_SIGNAL_PARQUET_DATA_DIR (fallback ./data/)"
-        ),
+        help=replay_data_dir_help(),
     )
     parser.add_argument("--files-dir", default=default_files_dir(), help=files_dir_help())
     parser.add_argument("--group-file", default=default_group_file(), help=group_file_help())
@@ -92,12 +89,7 @@ def main() -> None:
         help="Market-data ingestion path: new parquet root (default) or legacy text files",
     )
     args = parser.parse_args()
-    data_dir = args.data_dir
-    if data_dir is None:
-        if args.data_source == "parquet":
-            data_dir = os.environ.get(_PARQUET_DATA_DIR_ENV, _DEFAULT_DATA_DIR)
-        else:
-            data_dir = _DEFAULT_DATA_DIR
+    data_dir = resolve_replay_data_dir(args.data_source, args.data_dir)
 
     from tw_signal_engine.market_data.parquet_rolling_history import ParquetRollingHistoryProvider
     from tw_signal_engine.market_data.rolling_history import RollingHistoryProvider
