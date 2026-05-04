@@ -85,6 +85,39 @@ def test_breakout_triggers_once_when_filters_pass() -> None:
     assert triggered_again is False
 
 
+def test_breakout_preserves_context_for_dashboard_rows() -> None:
+    state = SignalDayHighState(
+        symbol="2330",
+        established_high=1_060_000,
+        established_high_time=930_000_00000,
+        pullback_confirmed=True,
+        pullback_low=1_049_000,
+        pullback_time=930_100_00000,
+    )
+    cfg = SignalDayHighConfig(
+        enabled=True,
+        min_increase_ratio=0.06,
+        max_entries_per_symbol=1,
+        entry_start_time=905_000_00000,
+        entry_end_time=100_000_000000,
+    )
+
+    triggered, mt = evaluate_signal_day_high(
+        state, cfg, 1_061_000, 930_200_00000, 0, "StrongGroup", _ref()
+    )
+
+    assert triggered is True
+    assert mt == "StrongGroup"
+    assert state.last_trigger_high == 1_060_000
+    assert state.last_trigger_high_time == 930_000_00000
+    assert state.last_trigger_pullback_low == 1_049_000
+    assert state.last_trigger_pullback_time == 930_100_00000
+    assert state.last_trigger_time == 930_200_00000
+    assert state.triggered is True
+    assert state.entries == 1
+    assert state.established_high == 1_061_000
+
+
 def test_entry_window_and_match_type_and_min_increase_filters() -> None:
     cfg = SignalDayHighConfig(
         enabled=True,

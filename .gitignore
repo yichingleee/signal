@@ -58,6 +58,7 @@ __pycache__/
 *.egg-info/
 dist/
 .venv/
+.envrc
 
 # Runtime outputs (Python)
 runtime/caches/
@@ -72,6 +73,7 @@ dashboard/*.tsbuildinfo
 # Local system files and generated artifacts
 .DS_Store
 .envrc
+.tmp/
 artifacts/
 legacy/cpp/replay_tools/full_market_replay.pcap
 legacy/cpp/replay_tools/udp.*

@@ -87,7 +87,7 @@ Update [`src/tw_signal_engine/replay/replay_session.py`](../../../src/tw_signal_
    - `hooks: SessionHooks | None = None`
    - `on_dashboard_snapshot: Callable[[DashboardSnapshot], None] | None = None`
 2. [x] Use `provider.iterate_ticks()` when provider is provided.
-3. [x] Preserve existing replay behavior by defaulting to `FileReplayProvider` when provider is `None`.
+3. [x] Preserve replay-provider dependency injection: when `provider` is passed, use it directly; when absent, let the replay `data_source` select the default provider.
 4. [x] Invoke hooks at deterministic points:
    - `on_tick` after index calc
    - `on_screening` after match_type resolution

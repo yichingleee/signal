@@ -9,11 +9,12 @@ These documents explain how the current Python replay engine is organized and wh
 - [docs/design-docs/replay-runtime-optimization-verification.md](replay-runtime-optimization-verification.md): post-optimization benchmarks, correctness validation, and remaining bottleneck analysis
 - [docs/design-docs/dayhigh-strategy-implementation-research.md](dayhigh-strategy-implementation-research.md): compatibility research and implementation plan for the Day High Breakout strategy
 - [docs/design-docs/live-data-architecture.md](live-data-architecture.md): provider abstraction, Redis live, paced replay, backfill, session hooks
-- [docs/design-docs/dashboard-architecture.md](dashboard-architecture.md): FastAPI backend, React frontend, dual-mode API, WebSocket push, replay time-travel
+- [docs/design-docs/dashboard-architecture.md](dashboard-architecture.md): as-built dashboard structure, transport flow, route map, replay UX, and backend/frontend boundaries
 - [docs/references/legacy/research/live-data-integration-research.md](../references/legacy/research/live-data-integration-research.md): archived pre-implementation research notes
 
 Cross-links:
 
 - Current committed behavior: [docs/product-specs/current-strategy-spec.md](../product-specs/current-strategy-spec.md)
 - Runtime conventions: [docs/references/runtime-conventions.md](../references/runtime-conventions.md)
+- Dashboard operations: [docs/references/dashboard-operations.md](../references/dashboard-operations.md)
 - Technical debt: [docs/exec-plans/tech-debt-tracker.md](../exec-plans/tech-debt-tracker.md)

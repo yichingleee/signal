@@ -8,6 +8,7 @@ produce the same structures so the frontend is mode-agnostic.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from typing import Literal
 
 # ── Strong Group ──────────────────────────────────────────────────────────
 
@@ -154,6 +155,210 @@ class SignalAMonitorSnapshot:
     counters: SignalCounters = field(default_factory=SignalCounters)
 
 
+# ── Other signal-family monitors ─────────────────────────────────────────
+
+
+@dataclass(slots=True)
+class DashboardModuleStatus:
+    """Dashboard module availability for source-dashboard parity."""
+
+    key: str = ""
+    label: str = ""
+    availability: Literal["available", "unavailable"] = "available"
+    reason: str = ""
+    source_equivalent: str = ""
+
+
+@dataclass(slots=True)
+class SignalBMonitorEntry:
+    """Per-symbol Signal B state exposed to the dashboard."""
+
+    symbol: str = ""
+    name: str = ""
+    group_name: str = ""
+    forbidden: bool = False
+    in_buffer_zone: bool = False
+    in_trade_zone: bool = False
+    enter_market: bool = False
+    rolling_low: float = 0.0
+    rolling_sum_ratio: float = 0.0
+    status: str = ""
+
+
+@dataclass(slots=True)
+class SignalBMonitorSnapshot:
+    """Signal B dashboard summary."""
+
+    rows: list[SignalBMonitorEntry] = field(default_factory=list)
+    buffer_zone: int = 0
+    trade_zone: int = 0
+    triggered: int = 0
+    forbidden: int = 0
+
+
+SignalDayHighPhase = Literal["tracking", "pullback", "triggered", "holding", "exited"]
+
+
+@dataclass(slots=True)
+class SignalDayHighMonitorEntry:
+    """Per-symbol SignalDayHigh pullback/breakout state."""
+
+    symbol: str = ""
+    name: str = ""
+    group_name: str = ""
+    triggered: bool = False
+    established_high: float = 0.0
+    established_high_time: str = ""
+    pullback_confirmed: bool = False
+    pullback_low: float = 0.0
+    pullback_time: str = ""
+    last_trigger_high: float = 0.0
+    last_trigger_high_time: str = ""
+    last_trigger_pullback_low: float = 0.0
+    last_trigger_pullback_time: str = ""
+    trigger_time: str = ""
+    phase: SignalDayHighPhase = "tracking"
+    entries: int = 0
+    status: str = ""
+
+
+@dataclass(slots=True)
+class SignalDayHighPhaseCounts:
+    """Explicit phase counts for DayHigh row population."""
+
+    tracking: int = 0
+    pullback: int = 0
+    triggered: int = 0
+    holding: int = 0
+    exited: int = 0
+
+
+@dataclass(slots=True)
+class SignalDayHighSelectionRow:
+    """Per-symbol stock-selection explanation for DayHigh."""
+
+    symbol: str = ""
+    name: str = ""
+    group_name: str = ""
+    selected: bool = False
+    rejection_reason: str = ""
+    group_rank: int = 0
+    member_rank: int = 0
+    raw_member_rank: int = 0
+    m1_symbol: str = ""
+    current_price: float = 0.0
+    vwap: float = 0.0
+    vwap_pct_chg: float = 0.0
+    month_trading_val: int = 0
+    vol_ratio: float = 0.0
+    is_disposition: bool = False
+    is_prev_day_limit_up: bool = False
+    pass_symbol_valid: bool = False
+    pass_group_validity: bool = False
+    pass_group_rank: bool = False
+    pass_entry_min_group_rank: bool = True
+    pass_member_rank: bool = False
+    pass_raw_rank: bool = False
+    pass_vwap_band: bool = False
+    pass_disposition_block: bool = False
+    pass_prev_day_limit_up: bool = False
+    pass_entry_max_vol_ratio: bool = True
+
+
+@dataclass(slots=True)
+class SignalDayHighEntryRow:
+    """Per-symbol entry-gate explanation for DayHigh."""
+
+    symbol: str = ""
+    name: str = ""
+    group_name: str = ""
+    phase: SignalDayHighPhase = "tracking"
+    trigger_time: str = ""
+    current_price: float = 0.0
+    established_high: float = 0.0
+    pullback_low: float = 0.0
+    day_high_group_limit_up_count: int = 0
+    day_high_group_limit_up_limit: int = 0
+    day_high_group_limit_up_passed: bool = True
+    filter_entry_time_limit: bool = True
+    filter_prev_day_limit_up: bool = True
+    filter_no_entry_friday: bool = True
+    filter_max_0050_entry_chg: bool = True
+    filter_max_0050_intra_chg: bool = True
+    filter_volatility_pause: bool = True
+    filter_already_holding: bool = True
+    filter_single_forbidden: bool = True
+    filter_max_entry_price: bool = True
+    allowed: bool = False
+    entered: bool = False
+    block_reason: str = ""
+
+
+@dataclass(slots=True)
+class SignalDayHighExitRow:
+    """Exit-policy and outcome explanation for DayHigh positions."""
+
+    symbol: str = ""
+    name: str = ""
+    group_name: str = ""
+    status: Literal["open", "closed"] = "open"
+    entry_price: float = 0.0
+    current_price: float = 0.0
+    pnl_pct: float = 0.0
+    entry_time: str = ""
+    exit_time: str = ""
+    stop_basis: str = ""
+    stop_anchor: float = 0.0
+    stop_price: float = 0.0
+    time_exit_deadline: str = ""
+    take_profit_enabled: bool = False
+    bailout_enabled: bool = False
+    hold_overnight_on_limit_up: bool = False
+    currently_limit_up_locked: bool = False
+    overnight_eligible_now: bool = False
+    final_leave_cause: str = ""
+
+
+@dataclass(slots=True)
+class SignalDayHighLogicFunnel:
+    """DayHigh flow summary and block reasons."""
+
+    selected: int = 0
+    armed: int = 0
+    blocked: int = 0
+    entered: int = 0
+    holding: int = 0
+    exited: int = 0
+    block_reasons: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class SignalDayHighLogicSnapshot:
+    """Structured explainability payload for DayHigh."""
+
+    selection_rows: list[SignalDayHighSelectionRow] = field(default_factory=list)
+    entry_rows: list[SignalDayHighEntryRow] = field(default_factory=list)
+    exit_rows: list[SignalDayHighExitRow] = field(default_factory=list)
+    funnel: SignalDayHighLogicFunnel = field(default_factory=SignalDayHighLogicFunnel)
+
+
+@dataclass(slots=True)
+class SignalDayHighMonitorSnapshot:
+    """SignalDayHigh dashboard summary."""
+
+    rows: list[SignalDayHighMonitorEntry] = field(default_factory=list)
+    preparing: list[PreparingEntry] = field(default_factory=list)
+    entered: list[ActivePosition] = field(default_factory=list)
+    exited: list[CompletedTrade] = field(default_factory=list)
+    counters: SignalCounters = field(default_factory=SignalCounters)
+    phase_counts: SignalDayHighPhaseCounts = field(default_factory=SignalDayHighPhaseCounts)
+    tracking: int = 0
+    pullback: int = 0
+    triggered: int = 0
+    entries: int = 0
+    logic: SignalDayHighLogicSnapshot = field(default_factory=SignalDayHighLogicSnapshot)
+
+
 # ── Top-level snapshot ────────────────────────────────────────────────────
 
 
@@ -169,6 +374,9 @@ class DashboardSnapshot:
     singles: list[SingleSnapshot] = field(default_factory=list)
     vwap_monitor: list[VWAPMonitorEntry] = field(default_factory=list)
     signal_a: SignalAMonitorSnapshot = field(default_factory=SignalAMonitorSnapshot)
+    signal_b: SignalBMonitorSnapshot = field(default_factory=SignalBMonitorSnapshot)
+    signal_day_high: SignalDayHighMonitorSnapshot = field(default_factory=SignalDayHighMonitorSnapshot)
+    modules: list[DashboardModuleStatus] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)

@@ -4,16 +4,25 @@ import { StatusBar } from './components/layout/StatusBar'
 import { TimelineSlider } from './components/replay/TimelineSlider'
 import { MarketOverview } from './pages/MarketOverview'
 import { SignalAMonitor } from './pages/SignalAMonitor'
+import { SignalAShortMonitor } from './pages/SignalAShortMonitor'
+import { DayHighMonitor } from './pages/DayHighMonitor'
 import { useDashboardData } from './hooks/useDashboardData'
 
 export function App() {
-  const { snapshot, mode, connected, lastUpdate, stale, error, replay } = useDashboardData()
+  const { snapshot, mode, connected, feedStatus, lastUpdate, stale, error, replay } = useDashboardData()
 
   return (
     <BrowserRouter>
       <Header mode={mode} connected={connected} lastUpdate={lastUpdate} />
-      <StatusBar mode={mode} connected={connected} stale={stale} lastUpdate={lastUpdate} error={error} />
-      <Routes>
+      <StatusBar
+        mode={mode}
+        connected={connected}
+        feedStatus={feedStatus}
+        stale={stale}
+        lastUpdate={lastUpdate}
+        error={error}
+      />
+        <Routes>
         <Route
           path="/"
           element={<MarketOverview snapshot={snapshot} />}
@@ -21,6 +30,14 @@ export function App() {
         <Route
           path="/signal-a"
           element={<SignalAMonitor snapshot={snapshot} lastUpdate={lastUpdate} />}
+        />
+        <Route
+          path="/signal-a-short"
+          element={<SignalAShortMonitor snapshot={snapshot} lastUpdate={lastUpdate} />}
+        />
+        <Route
+          path="/day-high"
+          element={<DayHighMonitor snapshot={snapshot} lastUpdate={lastUpdate} />}
         />
       </Routes>
       {mode === 'replay' && replay && (

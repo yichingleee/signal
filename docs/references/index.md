@@ -3,7 +3,10 @@
 Reference docs hold stable conventions and historical material that should remain discoverable without being mistaken for the current implementation spec.
 
 - [docs/references/runtime-conventions.md](runtime-conventions.md): CLI, file layout, inputs, outputs, and runtime conventions
-- [docs/references/parity-status.md](parity-status.md): archived parity notes and preserved parity-sensitive behavior context
+- [docs/references/dashboard-operations.md](dashboard-operations.md): dashboard build, replay prerequisites, and operator-facing gotchas
+- [docs/references/fake-redis-live-dashboard-test.md](fake-redis-live-dashboard-test.md): local Redis publisher workflow for testing live dashboard mode without the real Redis host
+- [docs/references/parity-status.md](parity-status.md): archived C++ parity coverage and parity-sensitive implementation notes
+- [docs/references/parquet-vs-text-data-source-findings.md](parquet-vs-text-data-source-findings.md): parquet integration status, parquet-vs-text differences, and source-separation adoption guidance
 - [docs/references/research-audit.md](research-audit.md): migration audit summary that informed the rewrite
 - [docs/references/exec-plan-standard.md](exec-plan-standard.md): execution-plan authoring standard used by `docs/exec-plans/`
 - [docs/references/legacy/index.md](legacy/index.md): historical design notes retained only for context
@@ -12,3 +15,4 @@ Cross-links:
 
 - Current strategy behavior: [docs/product-specs/current-strategy-spec.md](../product-specs/current-strategy-spec.md)
 - Architecture: [docs/design-docs/runtime-architecture.md](../design-docs/runtime-architecture.md)
+- Dashboard design: [docs/design-docs/dashboard-architecture.md](../design-docs/dashboard-architecture.md)

@@ -7,8 +7,8 @@ function fmtPct(v: number): string {
 export function ExitedCards({ trades }: { trades: CompletedTrade[] }) {
   if (trades.length === 0) return null
 
-  const profits = trades.filter((t) => t.exit_cause.includes('take_profit'))
-  const losses = trades.filter((t) => t.exit_cause.includes('stop_loss'))
+  const profits = trades.filter((t) => t.exit_cause === 'takeProfit' || t.exit_cause === 'take_profit')
+  const losses = trades.filter((t) => t.exit_cause === 'stopLoss' || t.exit_cause === 'stop_loss')
 
   return (
     <div className="signal-section">
@@ -30,6 +30,7 @@ export function ExitedCards({ trades }: { trades: CompletedTrade[] }) {
                 <span className="symbol">{t.symbol}</span>
                 <span className="name">{t.name}</span>
                 <span className="tag">{t.group_tag}</span>
+                <span className={`tag ${t.side === 'short' ? 'short-side' : 'long-side'}`}>{t.side ?? 'long'}</span>
               </div>
               <div className="signal-card-body">
                 <div>
@@ -54,7 +55,10 @@ export function ExitedCards({ trades }: { trades: CompletedTrade[] }) {
                   <span className="label">出場時間</span>
                   <span className="value">{t.exit_time}</span>
                 </div>
-                <div />
+                <div>
+                  <span className="label">離場原因</span>
+                  <span className="value">{t.exit_cause || '-'}</span>
+                </div>
               </div>
             </div>
           )

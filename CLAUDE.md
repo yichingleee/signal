@@ -4,6 +4,7 @@
 
 - 主程式：`src/tw_signal_engine/`
 - 入口：`tw_signal_engine.cli.run_daily_replay`、`tw_signal_engine.cli.run_batch_replay`
+- 預設 replay 來源：parquet；legacy text 可用 `--data-source text`
 - 舊版 C++：`legacy/cpp/`，僅保留做 parity 與歷史參考
 
 ## 先看這些文件
@@ -24,10 +25,10 @@ uv run mypy src
 
 ```bash
 uv run python -m tw_signal_engine.cli.run_daily_replay \
-  --date 20260129 \
-  --data-dir exec/data \
-  --files-dir exec/files \
-  --group-file exec/files/group.csv \
+  --date 20260326 \
+  --data-dir /Users/liyijing/Projects/Trading/market-data/tick-data \
+  --files-dir /Users/liyijing/Projects/Trading/market-data/symbols \
+  --group-file /Users/liyijing/Projects/Trading/market-data/group/group-ver20260329.csv \
   --config exec/cfg/parameter.cfg
 ```
 
@@ -41,6 +42,7 @@ uv run python -m tw_signal_engine.cli.run_daily_replay \
 - `match_time_str` 是像 `91500000000` 的整數時間戳。
 - `match_time_us` 是從午夜起算的微秒，用在 rolling window。
 - `exec/cfg/parameter.cfg` 是目前 replay 使用的設定來源。
-- `exec/files/Symbols_YYYYMMDD.csv` 與 `exec/files/group.csv` 是必要輸入。
+- parquet 與 text 是不同資料來源，各自有 truth contract；不要把 text-vs-parquet 嚴格輸出相等當作 parquet 驗收門檻。
+- parquet replay 需要 `Symbols_YYYYMMDD.csv` 與 group file；缺 Symbols 時 parquet 模式會用 `[GUARD]` 跳過該日期。
 
 若文件內容與程式不一致，以 Python 程式碼與 `docs/` 內的 indexed docs 為準，不以舊版 C++ 或歷史設計筆記為準。

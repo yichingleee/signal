@@ -141,11 +141,17 @@ class SnapshotWriter:
         dashboard_singles: list[dict[str, Any]] = []
         dashboard_vwap: list[dict[str, Any]] = []
         dashboard_signal_a: dict[str, Any] = {}
+        dashboard_signal_b: dict[str, Any] = {}
+        dashboard_signal_day_high: dict[str, Any] = {}
+        dashboard_modules: list[dict[str, Any]] = []
         if dashboard_snapshot is not None:
             groups_raw = dashboard_snapshot.get("groups")
             singles_raw = dashboard_snapshot.get("singles")
             vwap_raw = dashboard_snapshot.get("vwap_monitor")
             signal_a_raw = dashboard_snapshot.get("signal_a")
+            signal_b_raw = dashboard_snapshot.get("signal_b")
+            signal_day_high_raw = dashboard_snapshot.get("signal_day_high")
+            modules_raw = dashboard_snapshot.get("modules")
             if isinstance(groups_raw, list):
                 dashboard_groups = [g for g in groups_raw if isinstance(g, dict)]
             if isinstance(singles_raw, list):
@@ -154,6 +160,12 @@ class SnapshotWriter:
                 dashboard_vwap = [v for v in vwap_raw if isinstance(v, dict)]
             if isinstance(signal_a_raw, dict):
                 dashboard_signal_a = signal_a_raw
+            if isinstance(signal_b_raw, dict):
+                dashboard_signal_b = signal_b_raw
+            if isinstance(signal_day_high_raw, dict):
+                dashboard_signal_day_high = signal_day_high_raw
+            if isinstance(modules_raw, list):
+                dashboard_modules = [m for m in modules_raw if isinstance(m, dict)]
 
         self._rows.append({
             "timestamp": minutes,
@@ -170,6 +182,9 @@ class SnapshotWriter:
             "dashboard_singles": json.dumps(dashboard_singles, ensure_ascii=False),
             "dashboard_vwap": json.dumps(dashboard_vwap, ensure_ascii=False),
             "dashboard_signal_a": json.dumps(dashboard_signal_a, ensure_ascii=False),
+            "dashboard_signal_b": json.dumps(dashboard_signal_b, ensure_ascii=False),
+            "dashboard_signal_day_high": json.dumps(dashboard_signal_day_high, ensure_ascii=False),
+            "dashboard_modules": json.dumps(dashboard_modules, ensure_ascii=False),
         })
 
     def finalize(self) -> Path | None:

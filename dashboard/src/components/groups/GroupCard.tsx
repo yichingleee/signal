@@ -16,9 +16,17 @@ function ratioColor(v: number): string {
   return v > 1.0 ? 'text-red' : 'text-green'
 }
 
-export function GroupCard({ group }: { group: GroupSnapshot }) {
+export function GroupCard({ group, onOpen }: { group: GroupSnapshot; onOpen?: (group: GroupSnapshot) => void }) {
   return (
-    <div className="group-card">
+    <div
+      className="group-card"
+      role={onOpen ? 'button' : undefined}
+      tabIndex={onOpen ? 0 : undefined}
+      onClick={() => onOpen?.(group)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') onOpen?.(group)
+      }}
+    >
       <div className="group-card-header">
         <h3>{group.group_name}</h3>
         <div className="group-stats">

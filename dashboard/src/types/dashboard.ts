@@ -57,6 +57,7 @@ export interface PreparingEntry {
   day_low: number
   stop_loss: number
   near_vwap_pv_ratio: number
+  side?: 'long' | 'short'
 }
 
 export interface ActivePosition {
@@ -71,6 +72,8 @@ export interface ActivePosition {
   take_profit: number
   day_high: number
   entry_time: string
+  side?: 'long' | 'short'
+  qty?: number
 }
 
 export interface CompletedTrade {
@@ -84,6 +87,7 @@ export interface CompletedTrade {
   entry_time: string
   exit_time: string
   exit_cause: string
+  side?: 'long' | 'short'
 }
 
 export interface SignalCounters {
@@ -102,6 +106,173 @@ export interface SignalAMonitorSnapshot {
   counters: SignalCounters
 }
 
+export interface DashboardModuleStatus {
+  key: string
+  label: string
+  availability: 'available' | 'unavailable'
+  reason: string
+  source_equivalent: string
+}
+
+export interface SignalBMonitorEntry {
+  symbol: string
+  name: string
+  group_name: string
+  forbidden: boolean
+  in_buffer_zone: boolean
+  in_trade_zone: boolean
+  enter_market: boolean
+  rolling_low: number
+  rolling_sum_ratio: number
+  status: string
+}
+
+export interface SignalBMonitorSnapshot {
+  rows: SignalBMonitorEntry[]
+  buffer_zone: number
+  trade_zone: number
+  triggered: number
+  forbidden: number
+}
+
+export type SignalDayHighPhase = 'tracking' | 'pullback' | 'triggered' | 'holding' | 'exited'
+
+export interface SignalDayHighMonitorEntry {
+  symbol: string
+  name: string
+  group_name: string
+  triggered: boolean
+  established_high: number
+  established_high_time: string
+  pullback_confirmed: boolean
+  pullback_low: number
+  pullback_time: string
+  last_trigger_high: number
+  last_trigger_high_time: string
+  last_trigger_pullback_low: number
+  last_trigger_pullback_time: string
+  trigger_time: string
+  phase: SignalDayHighPhase
+  entries: number
+  status: string
+}
+
+export interface SignalDayHighPhaseCounts {
+  tracking: number
+  pullback: number
+  triggered: number
+  holding: number
+  exited: number
+}
+
+export interface SignalDayHighSelectionRow {
+  symbol: string
+  name: string
+  group_name: string
+  selected: boolean
+  rejection_reason: string
+  group_rank: number
+  member_rank: number
+  raw_member_rank: number
+  m1_symbol: string
+  current_price: number
+  vwap: number
+  vwap_pct_chg: number
+  month_trading_val: number
+  vol_ratio: number
+  is_disposition: boolean
+  is_prev_day_limit_up: boolean
+  pass_symbol_valid: boolean
+  pass_group_validity: boolean
+  pass_group_rank: boolean
+  pass_entry_min_group_rank: boolean
+  pass_member_rank: boolean
+  pass_raw_rank: boolean
+  pass_vwap_band: boolean
+  pass_disposition_block: boolean
+  pass_prev_day_limit_up: boolean
+  pass_entry_max_vol_ratio: boolean
+}
+
+export interface SignalDayHighEntryRow {
+  symbol: string
+  name: string
+  group_name: string
+  phase: SignalDayHighPhase
+  trigger_time: string
+  current_price: number
+  established_high: number
+  pullback_low: number
+  day_high_group_limit_up_count: number
+  day_high_group_limit_up_limit: number
+  day_high_group_limit_up_passed: boolean
+  filter_entry_time_limit: boolean
+  filter_prev_day_limit_up: boolean
+  filter_no_entry_friday: boolean
+  filter_max_0050_entry_chg: boolean
+  filter_max_0050_intra_chg: boolean
+  filter_volatility_pause: boolean
+  filter_already_holding: boolean
+  filter_single_forbidden: boolean
+  filter_max_entry_price: boolean
+  allowed: boolean
+  entered: boolean
+  block_reason: string
+}
+
+export interface SignalDayHighExitRow {
+  symbol: string
+  name: string
+  group_name: string
+  status: 'open' | 'closed'
+  entry_price: number
+  current_price: number
+  pnl_pct: number
+  entry_time: string
+  exit_time: string
+  stop_basis: string
+  stop_anchor: number
+  stop_price: number
+  time_exit_deadline: string
+  take_profit_enabled: boolean
+  bailout_enabled: boolean
+  hold_overnight_on_limit_up: boolean
+  currently_limit_up_locked: boolean
+  overnight_eligible_now: boolean
+  final_leave_cause: string
+}
+
+export interface SignalDayHighLogicFunnel {
+  selected: number
+  armed: number
+  blocked: number
+  entered: number
+  holding: number
+  exited: number
+  block_reasons: Record<string, number>
+}
+
+export interface SignalDayHighLogicSnapshot {
+  selection_rows: SignalDayHighSelectionRow[]
+  entry_rows: SignalDayHighEntryRow[]
+  exit_rows: SignalDayHighExitRow[]
+  funnel: SignalDayHighLogicFunnel
+}
+
+export interface SignalDayHighMonitorSnapshot {
+  rows: SignalDayHighMonitorEntry[]
+  preparing: PreparingEntry[]
+  entered: ActivePosition[]
+  exited: CompletedTrade[]
+  counters: SignalCounters
+  phase_counts: SignalDayHighPhaseCounts
+  tracking: number
+  pullback: number
+  triggered: number
+  entries: number
+  logic: SignalDayHighLogicSnapshot
+}
+
 export interface DashboardSnapshot {
   timestamp: string
   time_raw: number
@@ -110,18 +281,41 @@ export interface DashboardSnapshot {
   singles: SingleSnapshot[]
   vwap_monitor: VWAPMonitorEntry[]
   signal_a: SignalAMonitorSnapshot
+  signal_b: SignalBMonitorSnapshot
+  signal_day_high: SignalDayHighMonitorSnapshot
+  modules: DashboardModuleStatus[]
+}
+
+export interface LiveFeedStatus {
+  source: string
+  connected: boolean
+  subscribed_channels: number
+  last_message_at: string
+  last_tick_time_raw: number
+  reconnect_count: number
+  parse_error_count: number
+  ignored_message_count: number
+  dropped_tick_count: number
+  queue_depth: number
+  last_error: string
 }
 
 export interface StatusResponse {
   mode: 'live' | 'replay'
   tick_count?: number
   last_time_str?: number
+  engine_status?: string
+  feed_status?: LiveFeedStatus
   ready?: boolean
   time_range?: {
     min_time: string
     max_time: string
     count: number
   }
+}
+
+export interface DashboardStatusResponse extends StatusResponse {
+  has_snapshot?: boolean
 }
 
 export interface ReplayStatusResponse {

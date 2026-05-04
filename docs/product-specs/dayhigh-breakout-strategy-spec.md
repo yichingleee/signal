@@ -10,9 +10,11 @@ This document defines the implemented DayHigh replay behavior for the Python eng
 - Entry price condition: current trade >= `+6%` from previous close
 - Strong-group requirement at trigger tick:
   - top `G1-G10` group
+  - configured group-rank floor when `entry_min_group_rank > 0`
   - member rank `M1`
   - raw rank `R1`
   - configurable VWAP upper bound (DayHigh config sets `9.5%`)
+  - disposition, previous-day limit-up, and max volume-ratio gates from strong-group entry configuration
 
 ## Entry and Positioning
 
@@ -39,6 +41,8 @@ This document defines the implemented DayHigh replay behavior for the Python eng
   - bid queue present (`bid[0].price > 0` or `total_bid_qty > 0`)
 - If `hold_overnight_on_limit_up=true` and an open DayHigh position is locked at
   `exit_time_limit`, replay moves the position into overnight carry state.
+- Dashboard `overnight_eligible_now` follows the same deadline rule: locked limit-up before
+  `exit_time_limit` is shown as locked, but not yet overnight-eligible.
 - Batch replay provides a shared `overnight_holdings` map across days.
 - On the next replay date, the first trade tick for that symbol force-exits the carried
   position with `final_leave_cause=overnightExit`.

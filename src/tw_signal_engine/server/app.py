@@ -14,7 +14,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from tw_signal_engine.server.dashboard_snapshot import SignalAMonitorSnapshot
+from tw_signal_engine.server.dashboard_snapshot import (
+    DashboardModuleStatus,
+    SignalAMonitorSnapshot,
+    SignalBMonitorSnapshot,
+    SignalDayHighMonitorSnapshot,
+)
 from tw_signal_engine.server.live_state import LiveState
 from tw_signal_engine.server.replay_manager import ReplayManager
 
@@ -249,6 +254,54 @@ def dashboard_signal_a() -> dict[str, Any]:
     return asdict(SignalAMonitorSnapshot())
 
 
+@app.get("/api/dashboard/signal-b")
+def dashboard_signal_b() -> dict[str, Any]:
+    """Signal B monitoring state."""
+    if _server_mode == "live" and _live_state is not None:
+        return _live_state.get_dashboard_signal_b()
+    if _replay_manager is not None:
+        snapshot = _replay_manager.get_current_snapshot()
+        if snapshot and "dashboard_signal_b" in snapshot:
+            result: dict[str, Any] = snapshot["dashboard_signal_b"]
+            return result
+        if snapshot and "signal_b" in snapshot:
+            result = snapshot["signal_b"]
+            if isinstance(result, dict):
+                return result
+    return asdict(SignalBMonitorSnapshot())
+
+
+@app.get("/api/dashboard/signal-day-high")
+def dashboard_signal_day_high() -> dict[str, Any]:
+    """SignalDayHigh monitoring state."""
+    if _server_mode == "live" and _live_state is not None:
+        return _live_state.get_dashboard_signal_day_high()
+    if _replay_manager is not None:
+        snapshot = _replay_manager.get_current_snapshot()
+        if snapshot and "dashboard_signal_day_high" in snapshot:
+            result: dict[str, Any] = snapshot["dashboard_signal_day_high"]
+            return result
+        if snapshot and "signal_day_high" in snapshot:
+            result = snapshot["signal_day_high"]
+            if isinstance(result, dict):
+                return result
+    return asdict(SignalDayHighMonitorSnapshot())
+
+
+@app.get("/api/dashboard/modules")
+def dashboard_modules() -> dict[str, Any]:
+    """Dashboard module availability metadata."""
+    if _server_mode == "live" and _live_state is not None:
+        return {"modules": _live_state.get_dashboard_modules()}
+    if _replay_manager is not None:
+        snapshot = _replay_manager.get_current_snapshot()
+        if snapshot and "dashboard_modules" in snapshot:
+            return {"modules": snapshot["dashboard_modules"]}
+        if snapshot and "modules" in snapshot:
+            return {"modules": snapshot["modules"]}
+    return {"modules": [asdict(m) for m in _default_dashboard_modules()]}
+
+
 @app.get("/api/dashboard/status")
 def dashboard_status() -> dict[str, Any]:
     """Dashboard-specific status."""
@@ -269,3 +322,71 @@ def dashboard_status() -> dict[str, Any]:
 _dashboard_dist = Path(__file__).resolve().parent.parent.parent.parent / "dashboard" / "dist"
 if _dashboard_dist.exists():
     app.mount("/", StaticFiles(directory=str(_dashboard_dist), html=True), name="dashboard")
+
+
+def _default_dashboard_modules() -> list[DashboardModuleStatus]:
+    return [
+        DashboardModuleStatus(
+            "strong-groups",
+            "Strong Groups",
+            "available",
+            "",
+            "StockScreening strong groups",
+        ),
+        DashboardModuleStatus(
+            "burst-groups",
+            "Burst Groups",
+            "unavailable",
+            "This engine has no burst-group evaluator.",
+            "StockScreening burst groups",
+        ),
+        DashboardModuleStatus(
+            "intraday-burst",
+            "Intraday Burst Stocks",
+            "unavailable",
+            "This engine has no intraday burst-stock evaluator.",
+            "StockScreening intraday burst stocks",
+        ),
+        DashboardModuleStatus(
+            "strong-stocks",
+            "Strong Stocks",
+            "available",
+            "",
+            "StockScreening strong stocks",
+        ),
+        DashboardModuleStatus(
+            "vwap-watchlist",
+            "VWAP Watchlist",
+            "available",
+            "",
+            "StockScreening VWAP watchlist",
+        ),
+        DashboardModuleStatus(
+            "signal-a-family",
+            "Signal A / SignalAShort",
+            "available",
+            "",
+            "signal SignalA and SignalAShort",
+        ),
+        DashboardModuleStatus(
+            "signal-b",
+            "Signal B",
+            "available",
+            "",
+            "signal SignalB",
+        ),
+        DashboardModuleStatus(
+            "signal-c-summary",
+            "Signal C Summary",
+            "unavailable",
+            "Signal C is not implemented in this engine.",
+            "StockScreening Signal C",
+        ),
+        DashboardModuleStatus(
+            "day-high-summary",
+            "SignalDayHigh",
+            "available",
+            "",
+            "signal SignalDayHigh",
+        ),
+    ]

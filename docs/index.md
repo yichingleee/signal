@@ -4,7 +4,7 @@ This `docs/` tree is the repository's system of record for durable project knowl
 
 ## Design Docs
 
-- [docs/design-docs/index.md](design-docs/index.md): architecture, namespace boundaries, live data integration, and dashboard
+- [docs/design-docs/index.md](design-docs/index.md): architecture, namespace boundaries, live data integration, and dashboard UI/backend design
 
 ## Product Specs
 
@@ -12,7 +12,7 @@ This `docs/` tree is the repository's system of record for durable project knowl
 
 ## References
 
-- [docs/references/index.md](references/index.md): file conventions, CLI/env path defaults, parity status, migration history, and archived notes
+- [docs/references/index.md](references/index.md): file conventions, CLI/env path defaults, dashboard operations, parity status, migration history, and archived notes
 
 ## Execution Plans
 

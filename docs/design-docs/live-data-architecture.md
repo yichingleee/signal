@@ -36,7 +36,7 @@ def run_daily_replay(
 ) -> list[TradeRecord]:
 ```
 
-- If `provider is None` → constructs `FileReplayProvider` (backward compatible with batch replay)
+- If `provider is None` → constructs the replay provider selected by `data_source` (`ParquetReplayProvider` for parquet, `FileReplayProvider` for text)
 - If a provider is passed → uses it directly (live, paced, backfill, or any future source)
 
 This is a pure dependency-injection pattern — the caller decides the data source, the session logic is unchanged.
@@ -45,15 +45,23 @@ This is a pure dependency-injection pattern — the caller decides the data sour
 
 ## 2. Provider Implementations
 
-### 2.1 FileReplayProvider
+### 2.1 ParquetReplayProvider
+
+**File**: `src/tw_signal_engine/market_data/parquet_replay_provider.py`
+
+Reads `TWSE/YYYYMMDD.parquet` and `TPEX/YYYYMMDD.parquet`, validates the replay schema, applies parquet source filters, maps markets to engine codes (`TSE` / `OTC`), and yields chronological `MarketTick` objects. This is the default replay provider for the daily and batch CLIs.
+
+**When to use**: Default daily and batch replay from the parquet tick-data root.
+
+### 2.2 FileReplayProvider
 
 **File**: `src/tw_signal_engine/market_data/file_replay_provider.py`
 
 Wraps the existing `merge_market_streams()` function. Reads OTC + TSE archive files (`OTCQuote.YYYYMMDD`, `TSEQuote.YYYYMMDD`), merges them by `match_time_str`, and yields `MarketTick` objects. No timing delays — runs as fast as the CPU allows.
 
-**When to use**: Batch backtesting, replay investigations, generating Parquet snapshots for replay mode.
+**When to use**: Explicit `--data-source text` compatibility runs and archived golden parity tests.
 
-### 2.2 PacedReplayProvider
+### 2.3 PacedReplayProvider
 
 **File**: `src/tw_signal_engine/market_data/paced_replay_provider.py`
 
@@ -76,7 +84,7 @@ sleep_needed = target_delay - (wall_time - start_wall)
 
 **When to use**: Dashboard development/testing without waiting for a full trading day. Activated via CLI flags `--paced --speed 2.0`.
 
-### 2.3 RedisLiveProvider
+### 2.4 RedisLiveProvider
 
 **File**: `src/tw_signal_engine/market_data/redis_live_provider.py`
 
@@ -113,6 +121,49 @@ replay_session.py main loop         ← unchanged from batch replay
 6. **Enrichment**: Each tick is enriched with `prev_limit_up` (from previous-day reference data) and `volatility_pause` (via `NumTracker` — True if ≤3 trades in same second), identical to file replay enrichment.
 
 7. **Graceful shutdown**: `stop()` sets a `threading.Event` and pushes `None` sentinel to unblock the queue. CLI registers `SIGINT`/`SIGTERM` handlers.
+
+**Redis message contract**:
+
+Redis Pub/Sub channels are stock symbols such as `2330`. Symbol fields in
+payloads may contain trailing spaces and are stripped before pairing and status
+lookup.
+
+Trade payloads use the replay-compatible CSV shape:
+
+```text
+Trade,<symbol>,<HHMMSSuuuuuu>,<func_code>,<price_x10000>,<tick_volume>,<total_volume>,...
+```
+
+Depth payloads are separate CSV-like rows with bid and ask sections:
+
+```text
+Depth,<symbol>,<HHMMSSuuuuuu>,BID:5,<price>,<qty>,...,ASK:5,<price>,<qty>,...
+```
+
+Only normal trade rows are emitted to the engine. `func_code != 0` rows are
+counted as ignored messages. Prices remain integer scaled by 10,000, matching
+the replay parser and engine threshold logic. A Trade row is buffered until a
+matching Depth row arrives; if a newer Trade arrives first, the older Trade is
+flushed without depth data.
+
+**Health status**:
+
+`RedisLiveProvider.get_status()` returns `LiveFeedStatus`, which is also copied
+into `LiveState` for the web API. Fields are:
+
+| Field | Meaning |
+|---|---|
+| `source` | Feed type, currently `redis` |
+| `connected` | Listener is connected and subscribed |
+| `subscribed_channels` | Current subscribed symbol count |
+| `last_message_at` | UTC timestamp of the most recent decoded Pub/Sub message |
+| `last_tick_time_raw` | Last emitted `MarketTick.match_time_str` |
+| `reconnect_count` | Redis reconnect attempts after connection loss |
+| `parse_error_count` | Malformed Trade/Depth rows or parser failures |
+| `ignored_message_count` | Non-Trade/Depth, Depth without Trade, or non-normal Trade rows |
+| `dropped_tick_count` | Reserved for bounded queues; should remain zero today |
+| `queue_depth` | Current queue backlog between listener and engine loop |
+| `last_error` | Most recent listener or parser error text |
 
 **Configuration** (`LiveConfig` in `config/strategy_config.py`):
 
@@ -193,7 +244,16 @@ class SessionHooks:
 
 ## 4. Data Flow Diagrams
 
-### Batch Replay (existing)
+### Batch Replay (default parquet)
+
+```
+TWSE + TPEX parquet files
+    → ParquetReplayProvider.iterate_ticks()
+    → replay_session.py main loop
+    → CSV reports (order_log, report_trades, report_summary)
+```
+
+### Batch Replay (legacy text)
 
 ```
 TSEQuote + OTCQuote files
@@ -317,6 +377,8 @@ Integers sort naturally, compare cheaply, and have no timezone ambiguity. The fo
 | `TestRedisLiveProvider::test_handle_trade_depth_pairing` | Trade + Depth lines are paired into a single `MarketTick` |
 | `TestRedisLiveProvider::test_handle_trade_without_depth` | Pending Trade is flushed when next Trade arrives (no Depth) |
 | `TestRedisLiveProvider::test_status_code_filter` | Non-normal trades (`func_code != '0'`) are filtered out |
+| `TestRedisLiveProvider::test_fake_redis_listener_decodes_bytes_and_strings` | Fake Pub/Sub drives the listener without a real Redis server |
+| `TestRedisLiveProvider::test_fake_redis_listener_reconnect_status` | Connection loss increments reconnect health and resumes on the next fake client |
 | `TestBackfillThenLiveProvider::test_file_then_live` | Composite provider switches from file to live at cutover |
 | `TestBackfillThenLiveProvider::test_dedup_overlap` | Duplicate ticks at cutover boundary are deduplicated |
 
@@ -338,7 +400,7 @@ To verify against a live Redis server (requires access to `192.168.100.130`):
 
 ### Parity Testing
 
-The gold standard for correctness: run the same day through both `FileReplayProvider` and `RedisLiveProvider` (by recording live ticks to a file), then diff the trade outputs. They must be identical.
+For live-provider correctness, run the same captured live tick source through `RedisLiveProvider` and an equivalent replay provider, then diff the trade outputs for that source. Do not use parquet-vs-text equality as a correctness gate; those feeds have separate source contracts.
 
 ```bash
 # Step 1: Run batch replay

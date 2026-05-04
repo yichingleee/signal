@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from tw_signal_engine.market_data.providers import LiveFeedStatus
 from tw_signal_engine.records.market_event_records import MarketTick, QuotePair, TradeRecord
 from tw_signal_engine.records.trade_records import EntryTrade
 from tw_signal_engine.server.live_state import LiveState
@@ -125,6 +126,8 @@ class TestLiveState:
         status = state.get_status()
         assert status["mode"] == "live"
         assert status["tick_count"] == 0
+        assert status["feed_status"]["source"] == "redis"
+        assert status["feed_status"]["connected"] is False
 
     def test_on_tick_updates_state(self):
         state = LiveState()
@@ -225,3 +228,52 @@ class TestLiveState:
 
         signals = state.get_recent_signals()
         assert len(signals) <= 200
+
+    def test_update_feed_status(self):
+        state = LiveState()
+
+        state.update_feed_status(
+            LiveFeedStatus(
+                connected=True,
+                subscribed_channels=2,
+                last_message_at="2026-04-30T01:00:00+00:00",
+                reconnect_count=1,
+            )
+        )
+
+        status = state.get_status()
+        assert status["engine_status"] == "starting"
+        assert status["feed_status"]["connected"] is True
+        assert status["feed_status"]["subscribed_channels"] == 2
+        assert status["feed_status"]["reconnect_count"] == 1
+
+
+class TestStatusApis:
+    def test_live_status_includes_feed_status(self):
+        from tw_signal_engine.server import app as server_app
+
+        state = LiveState()
+        state.update_feed_status({"source": "redis", "connected": True, "subscribed_channels": 3})
+        server_app.configure(mode="live", live_state=state)
+
+        status = server_app.get_status()
+        dashboard_status = server_app.dashboard_status()
+
+        assert status["mode"] == "live"
+        assert status["feed_status"]["connected"] is True
+        assert dashboard_status["feed_status"]["subscribed_channels"] == 3
+        assert dashboard_status["has_snapshot"] is False
+
+    def test_replay_status_does_not_claim_redis_connection(self, tmp_path: Path):
+        from tw_signal_engine.server import app as server_app
+
+        manager = ReplayManager("20260129", snapshot_dir=str(tmp_path))
+        server_app.configure(mode="replay", replay_manager=manager)
+
+        status = server_app.get_status()
+        dashboard_status = server_app.dashboard_status()
+
+        assert status["mode"] == "replay"
+        assert status["ready"] is False
+        assert "feed_status" not in status
+        assert "feed_status" not in dashboard_status

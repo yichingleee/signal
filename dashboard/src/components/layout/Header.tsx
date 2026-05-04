@@ -18,6 +18,12 @@ export function Header({ mode, connected, lastUpdate }: Props) {
           <NavLink to="/signal-a" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
             Signal A 監測
           </NavLink>
+          <NavLink to="/signal-a-short" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+            SignalAShort 監測
+          </NavLink>
+          <NavLink to="/day-high" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+            DayHigh 監測
+          </NavLink>
         </nav>
       </div>
       <div className="header-right">

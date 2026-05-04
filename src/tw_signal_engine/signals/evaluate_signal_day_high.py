@@ -15,6 +15,22 @@ def _reset_for_new_high(state: SignalDayHighState, price: int, match_time_str: i
     state.pullback_time = 0
 
 
+def _clear_trigger_context(state: SignalDayHighState) -> None:
+    state.last_trigger_high = 0
+    state.last_trigger_high_time = 0
+    state.last_trigger_pullback_low = 0
+    state.last_trigger_pullback_time = 0
+    state.last_trigger_time = 0
+
+
+def _save_breakout_context(state: SignalDayHighState, match_time_str: int) -> None:
+    state.last_trigger_high = state.established_high
+    state.last_trigger_high_time = state.established_high_time
+    state.last_trigger_pullback_low = state.pullback_low
+    state.last_trigger_pullback_time = state.pullback_time
+    state.last_trigger_time = match_time_str
+
+
 def evaluate_signal_day_high(
     state: SignalDayHighState,
     config: SignalDayHighConfig,
@@ -37,11 +53,13 @@ def evaluate_signal_day_high(
         return False, "None"
 
     if state.established_high <= 0:
+        _clear_trigger_context(state)
         _reset_for_new_high(state, price, match_time_str)
         return False, "None"
 
     # Before pullback, a new high resets the pattern anchor.
     if not state.pullback_confirmed and price > state.established_high:
+        _clear_trigger_context(state)
         _reset_for_new_high(state, price, match_time_str)
         return False, "None"
 
@@ -63,7 +81,7 @@ def evaluate_signal_day_high(
         return False, "None"
 
     # Breakout observed. Reset for a new cycle before evaluating trigger filters.
-    trigger_high = state.established_high
+    _save_breakout_context(state, match_time_str)
     _reset_for_new_high(state, price, match_time_str)
 
     if state.triggered or state.entries >= config.max_entries_per_symbol:
@@ -83,7 +101,6 @@ def evaluate_signal_day_high(
         return False, "None"
 
     # The upper bound is intentionally handled at screening level (VWAP ranking).
-    _ = trigger_high
     state.triggered = True
     state.entries += 1
     return True, match_type

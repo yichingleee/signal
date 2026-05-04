@@ -56,3 +56,8 @@ class SignalDayHighState:
     pullback_low: int = 0
     pullback_time: int = 0
     entries: int = 0
+    last_trigger_high: int = 0
+    last_trigger_high_time: int = 0
+    last_trigger_pullback_low: int = 0
+    last_trigger_pullback_time: int = 0
+    last_trigger_time: int = 0

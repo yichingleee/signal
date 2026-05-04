@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
+
+def extract_valid_group_symbols(symbol_is_valid: Mapping[str, bool]) -> set[str]:
+    """Extract symbols that passed pre-validation for strong-group membership."""
+    return {symbol for symbol, is_valid in symbol_is_valid.items() if is_valid}
+
 
 def build_replay_universe(
     group_valid_symbols: set[str],

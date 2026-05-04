@@ -17,6 +17,7 @@ export function ActiveCards({ positions }: { positions: ActivePosition[] }) {
               <span className="symbol">{p.symbol}</span>
               <span className="name">{p.name}</span>
               <span className="tag">{p.group_tag}</span>
+              <span className={`tag ${p.side === 'short' ? 'short-side' : 'long-side'}`}>{p.side ?? 'long'}</span>
             </div>
             <div className="signal-card-body">
               <div>

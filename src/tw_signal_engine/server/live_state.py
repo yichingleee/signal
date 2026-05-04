@@ -6,12 +6,15 @@ import threading
 from dataclasses import asdict
 from typing import Any
 
+from tw_signal_engine.market_data.providers import LiveFeedStatus
 from tw_signal_engine.records.market_event_records import MarketTick, TradeRecord
 from tw_signal_engine.records.trade_records import EntryTrade
 from tw_signal_engine.replay.session_hooks import SessionHooks
 from tw_signal_engine.server.dashboard_snapshot import (
     DashboardSnapshot,
     SignalAMonitorSnapshot,
+    SignalBMonitorSnapshot,
+    SignalDayHighMonitorSnapshot,
 )
 from tw_signal_engine.state.symbol_state import IndexData
 
@@ -39,6 +42,7 @@ class LiveState:
         self._engine_status: str = "starting"
         self._fatal_error: str | None = None
         self._fatal_traceback: str | None = None
+        self._feed_status: dict[str, Any] = asdict(LiveFeedStatus())
 
     def build_hooks(self) -> SessionHooks:
         """Create SessionHooks that update this live state."""
@@ -57,12 +61,21 @@ class LiveState:
                 "tick_count": self._tick_count,
                 "last_time_str": self._last_time_str,
                 "engine_status": self._engine_status,
+                "feed_status": dict(self._feed_status),
             }
             if self._fatal_error is not None:
                 status["fatal_error"] = self._fatal_error
             if self._fatal_traceback is not None:
                 status["fatal_traceback"] = self._fatal_traceback
             return status
+
+    def update_feed_status(self, status: LiveFeedStatus | dict[str, Any] | None) -> None:
+        """Store the latest live provider health snapshot."""
+        if status is None:
+            return
+        feed_status = asdict(status) if isinstance(status, LiveFeedStatus) else dict(status)
+        with self._lock:
+            self._feed_status = feed_status
 
     def get_positions(self) -> dict[str, dict[str, Any]]:
         with self._lock:
@@ -190,6 +203,24 @@ class LiveState:
             if self._dashboard_snapshot is None:
                 return asdict(SignalAMonitorSnapshot())
             return asdict(self._dashboard_snapshot.signal_a)
+
+    def get_dashboard_signal_b(self) -> dict[str, Any]:
+        with self._lock:
+            if self._dashboard_snapshot is None:
+                return asdict(SignalBMonitorSnapshot())
+            return asdict(self._dashboard_snapshot.signal_b)
+
+    def get_dashboard_signal_day_high(self) -> dict[str, Any]:
+        with self._lock:
+            if self._dashboard_snapshot is None:
+                return asdict(SignalDayHighMonitorSnapshot())
+            return asdict(self._dashboard_snapshot.signal_day_high)
+
+    def get_dashboard_modules(self) -> list[dict[str, Any]]:
+        with self._lock:
+            if self._dashboard_snapshot is None:
+                return []
+            return [asdict(m) for m in self._dashboard_snapshot.modules]
 
     def get_dashboard_snapshot_dict(self) -> dict[str, Any] | None:
         with self._lock:

@@ -169,6 +169,7 @@ def test_run_daily_replay_contract_restores_live_params() -> None:
     assert "provider" in params
     assert "hooks" in params
     assert "on_dashboard_snapshot" in params
+    assert "write_outputs" in params
     assert "overnight_holdings" in params
 
 
@@ -293,10 +294,14 @@ def test_run_daily_replay_uses_injected_provider_and_callbacks(monkeypatch: pyte
     monkeypatch.setattr(rs, "evaluate_signal_a", lambda *args, **kwargs: next(signal_calls))
 
     events: list[str] = []
+    detail_events: list[str] = []
     snapshots: list[DashboardSnapshot] = []
     hooks = SessionHooks(
         on_tick=lambda tick, idx: events.append(f"tick:{tick.match_time_str}"),
         on_screening=lambda symbol, match_type, qualified: events.append(f"screen:{symbol}:{match_type}:{qualified}"),
+        on_screening_detail=lambda detail: detail_events.append(
+            f"detail:{detail.symbol}:{detail.match_type}:{detail.qualified}"
+        ),
         on_signal=lambda symbol, signal_type, triggered: events.append(
             f"signal:{symbol}:{signal_type}:{triggered}"
         ),
@@ -312,6 +317,7 @@ def test_run_daily_replay_uses_injected_provider_and_callbacks(monkeypatch: pyte
         hooks=hooks,
         on_dashboard_snapshot=snapshots.append,
         no_charts=True,
+        write_outputs=False,
     )
 
     assert len(trades) == 1
@@ -329,6 +335,10 @@ def test_run_daily_replay_uses_injected_provider_and_callbacks(monkeypatch: pyte
         "minute:93100000000",
     ]
     assert [snap.time_raw for snap in snapshots] == [93000000000, 93100000000]
+    assert detail_events == [
+        "detail:2330:None:False",
+        "detail:2330:None:False",
+    ]
 
 
 def test_signal_a_short_runs_independently_with_short_side(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -559,3 +569,99 @@ def test_trade_mode_short_signal_b_short_support_flag_requires_implementation(
             provider=_Provider(),
             no_charts=True,
         )
+
+
+def test_run_daily_replay_uses_only_true_valid_group_symbols_for_universe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tw_signal_engine.replay import replay_session as rs
+
+    class _Provider:
+        def iterate_ticks(self):
+            if False:
+                yield None
+
+    class _LogWriter:
+        def __init__(self, log_dir: str, date: str) -> None:
+            self.log_dir = log_dir
+            self.date = date
+
+        def write_entry(self, *args, **kwargs) -> None:
+            return None
+
+        def write_leave(self, *args, **kwargs) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    class _StrongGroupStub:
+        def __init__(self, *args, **kwargs) -> None:
+            self.symbol_is_valid = {"AAA": True, "BBB": False, "CCC": True}
+
+        def initialize_validity(self) -> None:
+            return None
+
+        def on_tick(
+            self,
+            *args,
+            **kwargs,
+        ) -> bool:
+            return False
+
+        def is_single_allowed(self, *args, **kwargs) -> bool:
+            return False
+
+        def get_group_limit_up_count(self, *args, **kwargs) -> int:
+            return 0
+
+        def to_snapshot(self, *args, **kwargs) -> list[object]:
+            return []
+
+    captured = {}
+
+    def _spy_build_replay_universe(
+        group_valid_symbols: set[str],
+        single_valid_symbols: set[str] | None = None,
+        required_proxies: set[str] | None = None,
+    ) -> set[str]:
+        captured["group_valid_symbols"] = set(group_valid_symbols)
+        captured["single_valid_symbols"] = set(single_valid_symbols or set())
+        captured["required_proxies"] = set(required_proxies or set())
+        captured["tick_filter"] = {"AAA", "0050", "CCC"}
+        return captured["tick_filter"]
+
+    monkeypatch.setattr(rs, "load_legacy_ini", lambda _: {})
+    cfg = NormalizedStrategyConfig()
+    cfg.strong_group.enabled = True
+    monkeypatch.setattr(rs, "normalize_strategy_config", lambda _: cfg)
+    monkeypatch.setattr(rs, "load_symbol_reference", lambda *_: {s: _ref(s) for s in ["AAA", "BBB", "CCC", "0050"]})
+    monkeypatch.setattr(rs, "derive_prev_day_limit_up", lambda *_: {})
+    monkeypatch.setattr(
+        rs,
+        "load_group_membership",
+        lambda *_: (
+            [],
+            {
+                "AAA": ["G1"],
+                "BBB": ["G1"],
+                "CCC": ["G2"],
+            },
+            {"G1": {"AAA", "BBB"}, "G2": {"CCC"}},
+        ),
+    )
+    monkeypatch.setattr(rs, "OrderLogWriter", _LogWriter)
+    monkeypatch.setattr(rs, "_generate_reports", lambda *args, **kwargs: None)
+    monkeypatch.setattr(rs, "StrongGroupEvaluator", _StrongGroupStub)
+    monkeypatch.setattr(rs, "build_replay_universe", _spy_build_replay_universe)
+
+    run_daily_replay(
+        trade_date="20260129",
+        history=HistoryWindow(vol_cum=[], trading_val=[], source_dates=[]),
+        provider=_Provider(),
+        no_charts=True,
+        write_outputs=False,
+    )
+
+    assert captured["group_valid_symbols"] == {"AAA", "CCC"}
+    assert captured["tick_filter"] == {"AAA", "0050", "CCC"}
